@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from config.telemetry import session_telemetry_id
 from routers.immich_models import (
     SessionCreateDto,
     SessionResponseDto,
@@ -123,12 +124,18 @@ async def delete_all_sessions(
                 except Exception as ws_error:
                     logger.warning(
                         "Failed to emit WebSocket event after session delete",
-                        extra={"session_id": session_token, "error": str(ws_error)},
+                        extra={
+                            "session_id": session_telemetry_id(session_token),
+                            "error": str(ws_error),
+                        },
                     )
             except Exception as e:
                 logger.warning(
                     "Failed to delete session during delete_all_sessions",
-                    extra={"session_id": session_token, "error": str(e)},
+                    extra={
+                        "session_id": session_telemetry_id(session_token),
+                        "error": str(e),
+                    },
                     exc_info=True,
                 )
 

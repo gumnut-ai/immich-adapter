@@ -1,6 +1,6 @@
 ---
 title: Logging
-last-updated: 2026-10-06
+last-updated: 2026-11-09
 ---
 
 # Logging
@@ -16,6 +16,23 @@ This enables better searching and correlation in Sentry.
 
 Never log signed CDN URLs: their query strings are bearer credentials. Use the
 `asset_id` and bare hostname for correlation.
+
+## Session tokens
+
+Never log a session token. A session's bearer token is its id, so
+`str(session.id)`, the `session_token` request state and the `{id}` of the
+`/api/sessions` routes are all credentials. Where a record needs to correlate
+with a session, log `session_telemetry_id(token)` from `config/telemetry.py`
+under `session_id`: it is stable per session, cannot be reversed, and matches
+the `session:<id>` cache keys that spans show.
+
+`config/sentry.py` and the stdout formatter in `config/logging.py` back this up
+by substituting tokens that context marks as such — Redis keys, session routes,
+`Bearer` and `immich_access_token` credentials, and the `session_id`,
+`session_token` and `x-immich-user-token` fields — and Sentry drops the stack
+locals of the modules in `_SESSION_TOKEN_MODULES`. A bare token under any other
+field name, or in a module missing from that list, still leaks, so add new
+session-handling modules there.
 
 ## Upstream response log levels
 

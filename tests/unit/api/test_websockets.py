@@ -12,6 +12,7 @@ from services.session_store import Session, SessionStoreError
 from services.websockets import (
     WebSocketEvent,
     _extract_session_token,
+    _session_room,
     _sid_to_user,
     connect,
     disconnect,
@@ -245,7 +246,9 @@ class TestConnectHandler:
             # Should join both user room and session room
             assert mock_sio["enter_room"].call_count == 2
             mock_sio["enter_room"].assert_any_call("test-sid", TEST_USER_ID)
-            mock_sio["enter_room"].assert_any_call("test-sid", str(TEST_SESSION_ID))
+            mock_sio["enter_room"].assert_any_call(
+                "test-sid", _session_room(str(TEST_SESSION_ID))
+            )
             # Should track session with tuple (user_id, session_id)
             assert _sid_to_user["test-sid"] == (TEST_USER_ID, str(TEST_SESSION_ID))
 
@@ -339,7 +342,7 @@ class TestConnectHandler:
             session_room_call = [
                 call
                 for call in mock_sio["enter_room"].call_args_list
-                if call[0][1] == str(TEST_SESSION_ID)
+                if call[0][1] == _session_room(str(TEST_SESSION_ID))
             ]
             assert len(session_room_call) == 1, (
                 "Client should join session_id room to receive on_session_delete events"
@@ -522,7 +525,7 @@ class TestEmitSessionEvent:
         mock_sio_emit.assert_called_once_with(
             "on_session_delete",
             "session-token-123",
-            room="session-token-123",
+            room=_session_room("session-token-123"),
         )
 
     @pytest.mark.anyio
@@ -533,7 +536,7 @@ class TestEmitSessionEvent:
         mock_sio_emit.assert_called_once_with(
             "on_session_delete",
             None,
-            room="session_123",
+            room=_session_room("session_123"),
         )
 
     @pytest.mark.anyio
@@ -544,7 +547,7 @@ class TestEmitSessionEvent:
         mock_sio_emit.assert_called_once_with(
             "on_session_delete",
             None,
-            room="session_123",
+            room=_session_room("session_123"),
         )
 
     @pytest.mark.anyio

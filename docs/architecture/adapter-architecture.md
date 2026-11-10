@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-10-23
+last-updated: 2026-11-09
 ---
 
 # Immich Adapter Architecture
@@ -181,8 +181,12 @@ attribute, not as a Sentry tag.
 The Sentry event hooks redact signed CDN credentials and filenames from error
 event values. HTTP client transaction spans likewise redact CDN query strings,
 URLs, and descriptions, and add `server.address` (and a valid
-`server.port`) for upstream correlation. Never put JWTs, API keys, or captured
-customer payloads in structured fields. Upstream response severity and
+`server.port`) for upstream correlation. Error, transaction and log hooks
+also replace session tokens with a non-reversible session telemetry id and drop
+the stack locals of session-handling modules; see
+[Logging § Session tokens](../references/logging.md#session-tokens). Never put
+JWTs, API keys, session tokens, or captured customer payloads in structured
+fields. Upstream response severity and
 aggregate degradation logging live in [Logging](../references/logging.md).
 
 ### Native request and stream metrics

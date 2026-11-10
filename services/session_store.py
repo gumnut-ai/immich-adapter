@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import redis.exceptions
 import sentry_sdk
 
+from config.telemetry import session_telemetry_id
 from utils.jwt_encryption import decrypt_jwt, encrypt_jwt
 from utils.redis_client import get_redis_client, parse_redis_peer
 from utils.redis_protocols import AsyncRedisClient
@@ -176,7 +177,8 @@ class Session:
         missing_fields = _REQUIRED_SESSION_FIELDS - set(data.keys())
         if missing_fields:
             raise SessionDataError(
-                f"Session {session_id} is missing required fields: {missing_fields}"
+                f"Session {session_telemetry_id(session_id)} is missing required "
+                f"fields: {missing_fields}"
             )
 
         try:
@@ -204,7 +206,7 @@ class Session:
             )
         except ValueError as e:
             raise SessionDataError(
-                f"Session {session_id} has malformed data: {e}"
+                f"Session {session_telemetry_id(session_id)} has malformed data: {e}"
             ) from e
 
     def get_jwt(self) -> str:

@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation"
-last-updated: 2026-10-01
+last-updated: 2026-11-09
 ---
 
 # WebSocket Implementation
@@ -18,7 +18,7 @@ user room:    one user, all connected sessions
 session room: one adapter session, all sockets for that session
 ```
 
-User-scoped events update every connected device owned by the user. Session-scoped events target one login, which allows session revocation to tell only the affected client to disconnect.
+User-scoped events update every connected device owned by the user. Session-scoped events target one login, which allows session revocation to tell only the affected client to disconnect. python-socketio logs room names at INFO, so the session room is named `session:<telemetry id>` (`config/telemetry.py::session_telemetry_id`) rather than the session's bearer token.
 
 The service retains a socket-ID-to-room mapping for disconnect cleanup and observability. It runs in the application's asyncio event loop; room membership and emission are delegated to python-socketio.
 

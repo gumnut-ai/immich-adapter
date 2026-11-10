@@ -2,7 +2,7 @@ import logging
 import logging.config
 import sys
 
-from config.telemetry import redact_sensitive_cdn_url
+from config.telemetry import redact_sensitive_cdn_url, redact_session_tokens_text
 
 # Unified log format constants to avoid duplication
 LOG_FORMAT = "%(asctime)s | %(levelname)-5s | %(name)s | %(message)s"
@@ -26,12 +26,28 @@ class RedactSensitiveHttpxQuery(logging.Filter):
         return True
 
 
+class RedactSessionTokensFormatter(logging.Formatter):
+    """Replace session tokens in formatted output, tracebacks included.
+
+    Covers Redis keys and session-route paths, such as the server access log of
+    `/api/sessions/<token>`. Sentry captures records before formatting and
+    scrubs them in its own hooks (`config.sentry`).
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_session_tokens_text(super().format(record))
+
+
 # Python dictionary configuration equivalent to the YAML
 LOGGING_CONFIG = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "default": {"format": LOG_FORMAT, "datefmt": LOG_DATE_FORMAT},
+        "default": {
+            "class": "config.logging.RedactSessionTokensFormatter",
+            "format": LOG_FORMAT,
+            "datefmt": LOG_DATE_FORMAT,
+        },
     },
     "filters": {
         "redact_sensitive_httpx_query": {"()": RedactSensitiveHttpxQuery},

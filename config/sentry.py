@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 from typing import Any
@@ -11,13 +12,66 @@ from config.telemetry import (
     redact_sensitive_cdn_query,
     redact_sensitive_cdn_text,
     redact_sensitive_cdn_url,
+    redact_session_tokens,
 )
 
 logger = logging.getLogger(__name__)
 
+# Modules whose stack frames can hold a session bearer token in locals under
+# arbitrary names: `session_token`, `session_uuid`, a session route's `id`
+# path parameter, and the ASGI `scope` or Socket.IO `environ`, which carry the
+# request headers and path parameters. `include_local_variables` stays at its
+# default (True) and the SDK scrubber matches only exact well-known names, so
+# the locals of these frames are dropped wholesale. A new module that handles
+# session tokens belongs here.
+_SESSION_TOKEN_MODULES = (
+    "routers.api.auth",
+    "routers.api.oauth",
+    "routers.api.sessions",
+    "routers.api.sync.routes",
+    "routers.middleware",
+    "routers.utils.gumnut_client",
+    "routers.utils.thumbnail_cache",
+    "services.checkpoint_store",
+    "services.library_resolver",
+    "services.session_store",
+    "services.websockets",
+    "engineio",
+    "fastapi",
+    "socketio",
+    "starlette",
+)
 
-def _redact_error_event(event: Event, _hint: Hint) -> Event:
-    """Remove signed-CDN credentials and filenames from error event values."""
+
+def _in_session_token_module(module: object) -> bool:
+    return isinstance(module, str) and any(
+        module == name or module.startswith(name + ".")
+        for name in _SESSION_TOKEN_MODULES
+    )
+
+
+def _scrub_session_tokens(event: Any) -> None:
+    """Drop token-bearing frame locals, then substitute any session token left
+    in the payload with its telemetry id (see `config.telemetry`)."""
+    for container in ("exception", "threads"):
+        values = event.get(container)
+        values = values.get("values") if isinstance(values, dict) else None
+        for value in values if isinstance(values, list) else []:
+            stacktrace = value.get("stacktrace") if isinstance(value, dict) else None
+            frames = stacktrace.get("frames") if isinstance(stacktrace, dict) else None
+            for frame in frames if isinstance(frames, list) else []:
+                if (
+                    isinstance(frame, dict)
+                    and "vars" in frame
+                    and _in_session_token_module(frame.get("module"))
+                ):
+                    frame["vars"] = {"scrubbed": "[Filtered]"}
+    redact_session_tokens(event)
+
+
+def _redact_error_event(event: Event, _hint: Hint) -> Event | None:
+    """Remove signed-CDN credentials, filenames and session tokens from error
+    event values."""
 
     def redact(value: Any) -> Any:
         if isinstance(value, str):
@@ -30,12 +84,34 @@ def _redact_error_event(event: Event, _hint: Hint) -> Event:
                 value[index] = redact(item)
         return value
 
-    try:
+    # before_send must never drop an otherwise useful error event over CDN
+    # redaction.
+    with contextlib.suppress(Exception):
         redact(event)
-        return event
+    try:
+        _scrub_session_tokens(event)
     except Exception:
-        # before_send must never drop an otherwise useful error event.
-        return event
+        # A session token is a live credential: drop the event rather than
+        # risk sending one.
+        return None
+    return event
+
+
+def _before_send_transaction(event: Event, hint: Hint) -> Event | None:
+    """Scrub session tokens from spans and request data, then enrich spans."""
+    try:
+        _scrub_session_tokens(event)
+    except Exception:
+        return None
+    return _enrich_http_spans(event, hint)
+
+
+def _before_send_log(log: Any, _hint: Hint) -> Any:
+    """Scrub session tokens from a log's body and attributes."""
+    try:
+        return redact_session_tokens(log)
+    except Exception:
+        return None
 
 
 def _enrich_http_spans(event, _hint):
@@ -99,24 +175,30 @@ def _enrich_http_spans(event, _hint):
     return event
 
 
+def sentry_init_options(dsn: str) -> dict[str, Any]:
+    """Keyword arguments for ``sentry_sdk.init``, shared with telemetry tests."""
+    return {
+        "dsn": dsn,
+        "release": os.environ.get("RENDER_GIT_COMMIT"),
+        "_experiments": {
+            "enable_logs": True,
+        },
+        "traces_sample_rate": 0.1,
+        "profiles_sample_rate": 0.1,
+        # Profiles will be automatically collected while
+        # there is an active span.
+        "profile_lifecycle": "trace",
+        "environment": get_settings().environment,
+        "before_send": _redact_error_event,
+        "before_send_transaction": _before_send_transaction,
+        "before_send_log": _before_send_log,
+    }
+
+
 def init_sentry():
     """Initialize Sentry for logging, error tracking, and monitoring."""
     sentry_dsn = get_settings().sentry_dsn
     if sentry_dsn:
-        sentry_sdk.init(
-            dsn=sentry_dsn,
-            release=os.environ.get("RENDER_GIT_COMMIT"),
-            _experiments={
-                "enable_logs": True,
-            },
-            traces_sample_rate=0.1,
-            profiles_sample_rate=0.1,
-            # Profiles will be automatically collected while
-            # there is an active span.
-            profile_lifecycle="trace",
-            environment=get_settings().environment,
-            before_send=_redact_error_event,
-            before_send_transaction=_enrich_http_spans,
-        )
+        sentry_sdk.init(**sentry_init_options(sentry_dsn))
     else:
         logger.info("Sentry disabled: SENTRY_DSN is empty or not set")
