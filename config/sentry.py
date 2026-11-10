@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 # (True) and the SDK scrubber matches only exact well-known names, so locals are
 # dropped wholesale from every library and standard-library frame (`in_app` not
 # true), and from the adapter's own frames in the modules below. A new adapter
-# module that handles session tokens belongs here.
+# module that handles session tokens belongs here, as does one that handles
+# OAuth sign-in secrets (sign-in secrets, authorization codes, PKCE verifiers).
 _SESSION_TOKEN_MODULES = (
     "routers.api.auth",
     "routers.api.oauth",
@@ -34,9 +35,11 @@ _SESSION_TOKEN_MODULES = (
     "routers.middleware",
     "routers.utils.cookies",
     "routers.utils.gumnut_client",
+    "routers.utils.oauth_utils",
     "routers.utils.thumbnail_cache",
     "services.checkpoint_store",
     "services.library_resolver",
+    "services.oauth_sign_in_store",
     "services.session_store",
     "services.websockets",
 )

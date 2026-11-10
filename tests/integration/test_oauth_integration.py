@@ -1,9 +1,12 @@
 """Integration tests for OAuth endpoints through auth middleware."""
 
+import base64
+import hashlib
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
+import fakeredis
 import pytest
 from fastapi.testclient import TestClient
 from gumnut import omit
@@ -12,13 +15,31 @@ from main import app
 from routers.utils.cookies import ImmichCookie
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_id
-from services.oauth_sign_in_store import get_oauth_sign_in_store
+from services.oauth_sign_in_store import OAuthSignInStore, get_oauth_sign_in_store
 from services.session_store import Session, SessionStore, get_session_store
 
 # Test UUIDs
 TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 TEST_USER_UUID = UUID("660e8400-e29b-41d4-a716-446655440001")
 TEST_GUMNUT_USER_ID = uuid_to_gumnut_id(TEST_USER_UUID, "intuser")
+
+
+def s256(verifier: str) -> str:
+    """RFC 7636 S256 code challenge for ``verifier``."""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def generated_verifier(gumnut_client) -> str:
+    """The verifier the last exchange presented, checked against the challenge
+    the last authorize sent."""
+    authorize = gumnut_client.oauth.auth_url.call_args.kwargs
+    verifier = gumnut_client.oauth.exchange.call_args.kwargs["code_verifier"]
+    assert authorize["code_challenge_method"] == "S256"
+    assert 43 <= len(verifier) <= 128
+    challenge = authorize["code_challenge"]
+    assert s256(verifier) == challenge
+    return verifier
 
 
 @pytest.fixture
@@ -82,12 +103,13 @@ class TestStartOAuthIntegration:
         assert result["url"].startswith("https://oauth.provider.com/authorize")
         assert "state=" in result["url"]
         assert "redirect_uri=" in result["url"]
-        mock_gumnut_client.oauth.auth_url.assert_called_once_with(
-            redirect_uri="http://localhost:3000/auth/callback",
-            code_challenge=None,
-            code_challenge_method=None,
-            extra_headers={"Authorization": omit},
-        )
+        # The adapter generated a PKCE challenge for a client that sent none.
+        mock_gumnut_client.oauth.auth_url.assert_called_once()
+        kwargs = mock_gumnut_client.oauth.auth_url.call_args.kwargs
+        assert kwargs["redirect_uri"] == "http://localhost:3000/auth/callback"
+        assert kwargs["code_challenge_method"] == "S256"
+        assert len(kwargs["code_challenge"]) == 43
+        assert kwargs["extra_headers"] == {"Authorization": omit}
 
     def test_start_oauth_with_pkce(self, client, mock_gumnut_client):
         """Test OAuth authorization with PKCE parameters through middleware."""
@@ -190,12 +212,13 @@ class TestFinishOAuthIntegration:
         assert response.cookies[ImmichCookie.AUTH_TYPE.value] == "oauth"
         assert response.cookies[ImmichCookie.IS_AUTHENTICATED.value] == "true"
 
-        # Verify SDK client was called correctly
+        # Verify SDK client was called correctly, presenting the verifier the
+        # adapter generated at authorize
         mock_gumnut_client.oauth.exchange.assert_called_once_with(
             code="abc123",
             state="xyz789",
             error=None,
-            code_verifier=None,
+            code_verifier=generated_verifier(mock_gumnut_client),
             extra_headers={"Authorization": omit},
         )
 
@@ -206,6 +229,14 @@ class TestFinishOAuthIntegration:
         self, client, mock_gumnut_client, mock_session_store
     ):
         """Test OAuth callback with PKCE code verifier through middleware."""
+        # This client starts its sign-in with its own PKCE challenge.
+        client.post(
+            "/api/oauth/authorize",
+            json={
+                "redirectUri": "http://localhost:3000/auth/callback",
+                "codeChallenge": "test_challenge_string",
+            },
+        )
         oauth_callback = {
             "url": "http://localhost:3000/auth/callback?code=abc123&state=xyz789",
             "codeVerifier": "test_verifier_string",
@@ -263,7 +294,7 @@ class TestFinishOAuthIntegration:
             code=None,
             state="xyz789",
             error="access_denied",
-            code_verifier=None,
+            code_verifier=generated_verifier(mock_gumnut_client),
             extra_headers={"Authorization": omit},
         )
 
@@ -343,6 +374,17 @@ class TestOAuthSignInBinding:
     Each TestClient has its own cookie jar, so two clients stand in for two
     browsers (or a native app that does not send cookies).
     """
+
+    @pytest.fixture
+    def redis_server(self):
+        return fakeredis.FakeServer()
+
+    @pytest.fixture
+    def sign_in_store(self, redis_server):
+        """A real store whose Redis the test can also reach synchronously."""
+        return OAuthSignInStore(
+            fakeredis.FakeAsyncRedis(server=redis_server, decode_responses=True)
+        )
 
     @pytest.fixture
     def backend(self, mock_gumnut_client):
@@ -434,7 +476,7 @@ class TestOAuthSignInBinding:
             code="abc123",
             state="server-state-1",
             error=None,
-            code_verifier=None,
+            code_verifier=generated_verifier(backend),
             extra_headers={"Authorization": omit},
         )
         mock_session_store.create.assert_called_once()
@@ -526,6 +568,10 @@ class TestOAuthSignInBinding:
         )
 
         assert response.status_code == 201
+        # The client's own PKCE pair passes through untouched.
+        authorize = backend.oauth.auth_url.call_args.kwargs
+        assert authorize["code_challenge"] == "challenge"
+        assert authorize["code_challenge_method"] == "S256"
         backend.oauth.exchange.assert_called_once_with(
             code="abc123",
             state="server-state-1",
@@ -534,6 +580,78 @@ class TestOAuthSignInBinding:
             extra_headers={"Authorization": omit},
         )
         mock_session_store.create.assert_called_once()
+
+    def test_generated_verifier_never_reaches_the_browser(self, client, backend):
+        authorize = client.post(
+            "/api/oauth/authorize", json={"redirectUri": WEB_CALLBACK}
+        )
+        client.post(
+            "/api/oauth/callback", json={"url": self.callback_url("server-state-1")}
+        )
+
+        verifier = generated_verifier(backend)
+        assert verifier not in authorize.text
+        assert verifier not in str(authorize.headers.get_list("set-cookie"))
+
+    def test_browser_cannot_substitute_its_own_verifier(self, client, backend):
+        client.post("/api/oauth/authorize", json={"redirectUri": WEB_CALLBACK})
+
+        response = client.post(
+            "/api/oauth/callback",
+            json={
+                "url": self.callback_url("server-state-1"),
+                "codeVerifier": "verifier-chosen-by-the-caller",
+            },
+        )
+
+        assert response.status_code == 201
+        assert generated_verifier(backend) != "verifier-chosen-by-the-caller"
+
+    def test_each_sign_in_gets_its_own_pkce_pair(self, client, other_client, backend):
+        client.post("/api/oauth/authorize", json={"redirectUri": WEB_CALLBACK})
+        other_client.post("/api/oauth/authorize", json={"redirectUri": WEB_CALLBACK})
+
+        first, second = (
+            call.kwargs["code_challenge"]
+            for call in backend.oauth.auth_url.call_args_list
+        )
+        assert first != second
+
+    def test_native_client_without_its_own_challenge_presents_generated_verifier(
+        self, client, other_client, backend, mock_session_store
+    ):
+        # Proves itself with its state, from a fresh cookie jar.
+        client.post(
+            "/api/oauth/authorize",
+            json={"redirectUri": MOBILE_REDIRECT, "state": "client-state"},
+        )
+
+        response = other_client.post(
+            "/api/oauth/callback",
+            json={
+                "url": self.callback_url("server-state-1", base=MOBILE_REDIRECT),
+                "state": "client-state",
+            },
+        )
+
+        assert response.status_code == 201
+        assert backend.oauth.exchange.call_args.kwargs["code_verifier"] == (
+            generated_verifier(backend)
+        )
+
+    def test_expired_sign_in_is_rejected_before_exchange(
+        self, client, backend, mock_session_store, redis_server
+    ):
+        # Without its record the sign-in has no verifier to present, so the
+        # callback must not reach the exchange at all.
+        client.post("/api/oauth/authorize", json={"redirectUri": WEB_CALLBACK})
+        fakeredis.FakeRedis(server=redis_server).flushall()
+
+        response = client.post(
+            "/api/oauth/callback", json={"url": self.callback_url("server-state-1")}
+        )
+
+        self.assert_rejected(response, backend, mock_session_store)
 
     def test_client_state_completes_sign_in_despite_unrelated_sign_in_cookie(
         self, client, other_client, backend, mock_session_store

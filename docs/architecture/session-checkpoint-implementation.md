@@ -27,7 +27,12 @@ a secret paired with that state: a random value in a short-lived HttpOnly
 `immich_oauth_sign_in` cookie for browsers, and the client's own `state` for
 a native client that sent one (Immich mobile). Any other callback gets a 400
 before the exchange, which leaves the sign-in open for the client that
-started it. The adapter then encrypts the returned JWT in Redis and returns a
+started it. A client that sends its own PKCE challenge (Immich mobile) presents
+its own verifier at callback. For any other client (Immich web) the adapter
+generates the PKCE pair, sends the S256 challenge, and keeps the verifier on
+that sign-in's Redis records, so the identity provider redeems the
+authorization code only together with a verifier no one holding the callback
+URL has. The adapter then encrypts the returned JWT in Redis and returns a
 fresh UUID session token as `accessToken`, also setting auth cookies. The
 client-facing token is independent of the Gumnut JWT: refreshing that JWT
 changes server-side custody without changing the client's identity or
