@@ -53,8 +53,10 @@ def redact_sensitive_cdn_text(text: str) -> str:
 # a session:
 # - text: the Redis keys built from it (`session:<token>`,
 #   `session:<token>:checkpoints`), the `/api/sessions/<token>` routes, a
-#   `Bearer <token>` credential and the web client's `immich_access_token`
-#   cookie;
+#   `Bearer <token>` credential, the web client's `immich_access_token`
+#   cookie, and the session index commands that redis-py quotes in pipeline
+#   errors (`SREM user:<id>:sessions <token>`,
+#   `ZADD sessions:by_updated_at <score> <token>`);
 # - fields: `session_id` / `session_token` in a log record or local variable,
 #   and the mobile client's `x-immich-user-token` header, which the SDK's own
 #   header filter does not know, whether as a dict key (request data,
@@ -62,7 +64,9 @@ def redact_sensitive_cdn_text(text: str) -> str:
 #   value may be a string, a `UUID` or a list of either.
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 _SESSION_TOKEN_IN_TEXT = re.compile(
-    rf"(session:|/sessions/|[Bb]earer\s+|immich_access_token=)({_UUID})"
+    r"(session:|/sessions/|[Bb]earer\s+|immich_access_token=|:sessions\s+"
+    r"|sessions:by_updated_at\s+(?:[0-9.eE+-]+\s+)?)"
+    rf"({_UUID})"
 )
 # Serialized frame locals arrive as reprs (`'<uuid>'`, `b'<uuid>'`,
 # `UUID('<uuid>')`); extras and log attributes as the values themselves.

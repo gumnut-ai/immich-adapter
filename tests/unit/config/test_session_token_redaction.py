@@ -3,7 +3,15 @@
 from typing import Any
 from uuid import UUID, uuid4
 
-from config.sentry import _in_session_token_module, _scrub_session_tokens
+import pytest
+
+from config.sentry import (
+    _before_send_log,
+    _before_send_transaction,
+    _in_session_token_module,
+    _redact_error_event,
+    _scrub_session_tokens,
+)
 from config.telemetry import (
     redact_session_tokens,
     redact_session_tokens_text,
@@ -28,6 +36,15 @@ def test_text_marked_as_session_is_substituted():
         (f"PUT /api/sessions/{TOKEN} HTTP/1.1", f"PUT /api/sessions/{REF} HTTP/1.1"),
         (f"Bearer {TOKEN}", f"Bearer {REF}"),
         (f"a=1; immich_access_token={TOKEN}", f"a=1; immich_access_token={REF}"),
+        (
+            f"Command # 3 (SREM user:u1:sessions {TOKEN}) of pipeline",
+            f"Command # 3 (SREM user:u1:sessions {REF}) of pipeline",
+        ),
+        (
+            f"ZADD sessions:by_updated_at 1731.5 {TOKEN}",
+            f"ZADD sessions:by_updated_at 1731.5 {REF}",
+        ),
+        (f"ZREM sessions:by_updated_at {TOKEN}", f"ZREM sessions:by_updated_at {REF}"),
     ]:
         assert redact_session_tokens_text(raw) == expected
 
@@ -148,3 +165,23 @@ def test_session_token_modules_exist():
 
     for name in _SESSION_TOKEN_MODULES:
         importlib.import_module(name)
+
+
+@pytest.mark.parametrize(
+    "hook, payload",
+    [
+        (_redact_error_event, {"extra": {"session_id": TOKEN}}),
+        (_before_send_transaction, {"type": "transaction", "spans": []}),
+        (_before_send_log, {"body": f"session:{TOKEN}", "attributes": {}}),
+    ],
+)
+def test_hooks_drop_the_payload_when_scrubbing_fails(monkeypatch, hook, payload):
+    """A session token is a live credential: unlike CDN redaction, which
+    fails open, a scrubbing failure drops the event or log."""
+
+    def fail(_value: Any) -> Any:
+        raise RuntimeError("scrubber failed")
+
+    monkeypatch.setattr("config.sentry.redact_session_tokens", fail)
+
+    assert hook(payload, {}) is None
