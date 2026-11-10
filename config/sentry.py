@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # dropped wholesale from every library and standard-library frame (`in_app` not
 # true), and from the adapter's own frames in the modules below. A new adapter
 # module that handles session tokens belongs here, as does one that handles
-# OAuth sign-in secrets (sign-in secrets, authorization codes, PKCE verifiers).
+# OAuth sign-in values (sign-in secrets, authorization codes, PKCE verifiers).
 _SESSION_TOKEN_MODULES = (
     "routers.api.auth",
     "routers.api.oauth",

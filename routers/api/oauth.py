@@ -111,11 +111,10 @@ async def start_oauth(
     Records who started the sign-in so only that client can finish it; see
     ``_find_sign_in``.
 
-    A client that sends its own PKCE challenge (Immich mobile) keeps its
-    verifier and presents it at callback. For any other client (Immich web)
-    the adapter generates the PKCE pair, sends the challenge, and keeps the
-    verifier on the sign-in's records for the callback to present, so the
-    authorization code can only be exchanged together with that verifier.
+    A client that sends no PKCE challenge (Immich web) gets one generated
+    here, whose verifier stays on the sign-in's records for the callback to
+    present: the authorization code is then useless without it. A client
+    that sends its own (Immich mobile) presents its own verifier.
 
     Args:
         oauth_config: Configuration containing redirect URI and optional PKCE parameters
@@ -207,9 +206,7 @@ async def finish_oauth(
 
     The callback must come from the client that started sign-in (see
     ``_find_sign_in``); otherwise it is rejected with 400 before the
-    code is exchanged, which leaves the sign-in open for that client. The
-    exchange presents the PKCE verifier the adapter generated for that
-    sign-in, or else the one the client sent.
+    code is exchanged, which leaves the sign-in open for that client.
 
     The session token (UUID) is returned as the accessToken.
     This decouples client authentication from the JWT, allowing JWT refresh

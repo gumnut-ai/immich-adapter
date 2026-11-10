@@ -1,30 +1,21 @@
 """The PKCE code verifier the adapter generates never reaches telemetry.
 
-Drives web OAuth sign-in with Sentry initialized from the production options
-and a capturing transport (the `telemetry` fixture of the session-token
-telemetry tests), then asserts the verifier appears nowhere in the serialized
-envelopes, the formatted log output or the log records.
+Drives web OAuth sign-in under the `telemetry` fixture, then asserts the
+verifier appears nowhere in the serialized envelopes, the formatted log output
+or the log records.
 """
 
-import socket
 from unittest.mock import AsyncMock, Mock, patch
 
 import fakeredis
 import pytest
-import redis.asyncio
 from httpx import ASGITransport, AsyncClient
-from redis.asyncio.retry import Retry
-from redis.backoff import NoBackoff
 
 from main import app
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 from routers.utils.oauth_utils import generate_pkce_pair
 from services.oauth_sign_in_store import OAuthSignInStore, get_oauth_sign_in_store
 from services.session_store import get_session_store
-from tests.unit.config.test_session_token_telemetry import (  # noqa: F401
-    _records_with,
-    telemetry,
-)
 
 WEB_CALLBACK = "https://testserver/auth/login"
 
@@ -71,10 +62,10 @@ async def _sign_in(store: OAuthSignInStore, backend: Mock) -> list[int]:
 
 
 @pytest.mark.anyio
-async def test_failed_exchange_carries_no_verifier(telemetry, pkce_pair, backend):  # noqa: F811
+async def test_failed_exchange_carries_no_verifier(telemetry, pkce_pair, backend):
     """The exchange fails after the verifier was stored in Redis, read back and
-    handed to the Gumnut API client: the Redis spans, the request
-    transactions, and the error event with its stack locals all saw it."""
+    handed to the Gumnut API client: the Redis spans and the error event's
+    stack locals both saw it."""
     verifier, _ = pkce_pair
     store = OAuthSignInStore(fakeredis.FakeAsyncRedis(decode_responses=True))
 
@@ -88,30 +79,18 @@ async def test_failed_exchange_carries_no_verifier(telemetry, pkce_pair, backend
     assert "db.redis" in emitted
     assert "Failed to complete OAuth authentication" in emitted
     assert verifier not in emitted
-    assert _records_with(verifier) == []
+    assert telemetry.records_with(verifier) == []
 
 
 @pytest.mark.anyio
 async def test_redis_failure_on_authorize_carries_no_verifier(
-    telemetry,  # noqa: F811
-    pkce_pair,
-    backend,
+    telemetry, unreachable_redis, pkce_pair, backend
 ):
     """Storing the sign-in fails inside the store, whose frame holds the
     verifier as a local."""
     verifier, _ = pkce_pair
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        closed_port = probe.getsockname()[1]
-    client = redis.asyncio.Redis(
-        port=closed_port,
-        socket_connect_timeout=0.2,
-        retry=Retry(NoBackoff(), retries=0),
-        decode_responses=True,
-    )
 
-    statuses = await _sign_in(OAuthSignInStore(client), backend)
-    await client.aclose()
+    statuses = await _sign_in(OAuthSignInStore(unreachable_redis), backend)
 
     emitted = telemetry.flush()
 
@@ -119,4 +98,4 @@ async def test_redis_failure_on_authorize_carries_no_verifier(
     assert "event" in telemetry.item_types
     assert "Failed to get OAuth authorization URL" in emitted
     assert verifier not in emitted
-    assert _records_with(verifier) == []
+    assert telemetry.records_with(verifier) == []

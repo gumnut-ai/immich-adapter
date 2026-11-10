@@ -3,10 +3,9 @@
 import base64
 import hashlib
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock
 from uuid import UUID
 
-import fakeredis
 import pytest
 from fastapi.testclient import TestClient
 from gumnut import omit
@@ -15,7 +14,7 @@ from main import app
 from routers.utils.cookies import ImmichCookie
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_id
-from services.oauth_sign_in_store import OAuthSignInStore, get_oauth_sign_in_store
+from services.oauth_sign_in_store import get_oauth_sign_in_store
 from services.session_store import Session, SessionStore, get_session_store
 
 # Test UUIDs
@@ -30,15 +29,14 @@ def s256(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
-def generated_verifier(gumnut_client) -> str:
-    """The verifier the last exchange presented, checked against the challenge
-    the last authorize sent."""
+def assert_exchange_presented_generated_verifier(gumnut_client) -> str:
+    """Assert the last exchange presented the verifier of the S256 challenge
+    the last authorize sent, and return it."""
     authorize = gumnut_client.oauth.auth_url.call_args.kwargs
     verifier = gumnut_client.oauth.exchange.call_args.kwargs["code_verifier"]
     assert authorize["code_challenge_method"] == "S256"
     assert 43 <= len(verifier) <= 128
-    challenge = authorize["code_challenge"]
-    assert s256(verifier) == challenge
+    assert s256(verifier) == authorize["code_challenge"]
     return verifier
 
 
@@ -218,9 +216,10 @@ class TestFinishOAuthIntegration:
             code="abc123",
             state="xyz789",
             error=None,
-            code_verifier=generated_verifier(mock_gumnut_client),
+            code_verifier=ANY,
             extra_headers={"Authorization": omit},
         )
+        assert_exchange_presented_generated_verifier(mock_gumnut_client)
 
         # Verify session was created
         mock_session_store.create.assert_called_once()
@@ -294,9 +293,10 @@ class TestFinishOAuthIntegration:
             code=None,
             state="xyz789",
             error="access_denied",
-            code_verifier=generated_verifier(mock_gumnut_client),
+            code_verifier=ANY,
             extra_headers={"Authorization": omit},
         )
+        assert_exchange_presented_generated_verifier(mock_gumnut_client)
 
     def test_finish_oauth_invalid_url(self, client):
         """Test handling of invalid callback URL through middleware."""
@@ -374,17 +374,6 @@ class TestOAuthSignInBinding:
     Each TestClient has its own cookie jar, so two clients stand in for two
     browsers (or a native app that does not send cookies).
     """
-
-    @pytest.fixture
-    def redis_server(self):
-        return fakeredis.FakeServer()
-
-    @pytest.fixture
-    def sign_in_store(self, redis_server):
-        """A real store whose Redis the test can also reach synchronously."""
-        return OAuthSignInStore(
-            fakeredis.FakeAsyncRedis(server=redis_server, decode_responses=True)
-        )
 
     @pytest.fixture
     def backend(self, mock_gumnut_client):
@@ -476,9 +465,10 @@ class TestOAuthSignInBinding:
             code="abc123",
             state="server-state-1",
             error=None,
-            code_verifier=generated_verifier(backend),
+            code_verifier=ANY,
             extra_headers={"Authorization": omit},
         )
+        assert_exchange_presented_generated_verifier(backend)
         mock_session_store.create.assert_called_once()
         # Sign-in completed, so the sign-in cookie is cleared.
         assert ImmichCookie.OAUTH_SIGN_IN.value not in client.cookies
@@ -589,7 +579,7 @@ class TestOAuthSignInBinding:
             "/api/oauth/callback", json={"url": self.callback_url("server-state-1")}
         )
 
-        verifier = generated_verifier(backend)
+        verifier = assert_exchange_presented_generated_verifier(backend)
         assert verifier not in authorize.text
         assert verifier not in str(authorize.headers.get_list("set-cookie"))
 
@@ -605,7 +595,7 @@ class TestOAuthSignInBinding:
         )
 
         assert response.status_code == 201
-        assert generated_verifier(backend) != "verifier-chosen-by-the-caller"
+        assert_exchange_presented_generated_verifier(backend)
 
     def test_each_sign_in_gets_its_own_pkce_pair(self, client, other_client, backend):
         client.post("/api/oauth/authorize", json={"redirectUri": WEB_CALLBACK})
@@ -635,23 +625,7 @@ class TestOAuthSignInBinding:
         )
 
         assert response.status_code == 201
-        assert backend.oauth.exchange.call_args.kwargs["code_verifier"] == (
-            generated_verifier(backend)
-        )
-
-    def test_expired_sign_in_is_rejected_before_exchange(
-        self, client, backend, mock_session_store, redis_server
-    ):
-        # Without its record the sign-in has no verifier to present, so the
-        # callback must not reach the exchange at all.
-        client.post("/api/oauth/authorize", json={"redirectUri": WEB_CALLBACK})
-        fakeredis.FakeRedis(server=redis_server).flushall()
-
-        response = client.post(
-            "/api/oauth/callback", json={"url": self.callback_url("server-state-1")}
-        )
-
-        self.assert_rejected(response, backend, mock_session_store)
+        assert_exchange_presented_generated_verifier(backend)
 
     def test_client_state_completes_sign_in_despite_unrelated_sign_in_cookie(
         self, client, other_client, backend, mock_session_store

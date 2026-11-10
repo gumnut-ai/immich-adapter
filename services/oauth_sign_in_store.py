@@ -2,13 +2,11 @@
 
 ``_find_sign_in`` in ``routers/api/oauth.py`` owns why. Each pairing is a
 Redis key named by a digest of the state and the secret, so Redis holds
-neither value. The record's value carries the PKCE code verifier the adapter
-generated for the sign-in, if any, so only a client holding one of the
-sign-in's secrets can have it presented at the code exchange.
+neither value. The key's value is the sign-in's adapter-generated PKCE
+verifier (see ``start_oauth``), if any.
 """
 
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +18,10 @@ from utils.redis_protocols import AsyncRedisClient
 OAUTH_SIGN_IN_TTL_SECONDS = 10 * 60
 
 _KEY_PREFIX = "oauth_sign_in:"
+
+# Value of a sign-in that has no adapter-generated verifier. No generated
+# verifier can equal it (they are at least 43 characters).
+_NO_VERIFIER = "1"
 
 
 def _key(server_state: str, secret: str) -> str:
@@ -48,21 +50,16 @@ class OAuthSignInStore:
         """Record that the client holding ``secret`` started this sign-in."""
         await self._redis.set(
             _key(server_state, secret),
-            json.dumps({"code_verifier": code_verifier}),
+            code_verifier or _NO_VERIFIER,
             ex=OAUTH_SIGN_IN_TTL_SECONDS,
         )
 
     async def find(self, server_state: str, secret: str) -> OAuthSignIn | None:
         """Return the sign-in recorded for ``secret``, or None if there is none."""
-        raw = await self._redis.get(_key(server_state, secret))
-        if raw is None:
+        value = await self._redis.get(_key(server_state, secret))
+        if value is None:
             return None
-        record = json.loads(raw)
-        # Records written before verifiers were stored hold "1": those
-        # sign-ins sent no adapter-generated challenge, so need no verifier.
-        if not isinstance(record, dict):
-            return OAuthSignIn(code_verifier=None)
-        return OAuthSignIn(code_verifier=record.get("code_verifier"))
+        return OAuthSignIn(code_verifier=None if value == _NO_VERIFIER else value)
 
 
 async def get_oauth_sign_in_store() -> OAuthSignInStore:

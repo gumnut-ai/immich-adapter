@@ -7,24 +7,14 @@ asserts the token appears nowhere in the serialized envelopes (transactions,
 error events, logs) or in the formatted log output, tracebacks included.
 """
 
-import copy
-import io
 import logging
-import logging.config
-from collections.abc import Iterator
-from dataclasses import dataclass, field
-from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import fakeredis
 import pytest
 import sentry_sdk
-from sentry_sdk.envelope import Envelope
-from sentry_sdk.transport import Transport
 
-from config.logging import LOGGING_CONFIG
-from config.sentry import sentry_init_options
 from config.telemetry import session_telemetry_id
 
 # Importing the app applies the production logging config (non-propagating
@@ -35,93 +25,6 @@ from routers.immich_models import SyncAckSetDto, SyncEntityType
 from services.checkpoint_store import CheckpointStore
 from services.session_store import SessionStore, SessionStoreError
 from services.websockets import WebSocketEvent, connect, emit_session_event, sio
-
-
-class _CaptureTransport(Transport):
-    def __init__(self, options: dict[str, Any] | None = None) -> None:
-        super().__init__(options)
-        self.envelopes: list[Envelope] = []
-
-    def capture_envelope(self, envelope: Envelope) -> None:
-        self.envelopes.append(envelope)
-
-
-def _records_with(token: str) -> list[str]:
-    """Log records emitted so far whose attributes contain the token.
-
-    The Sentry and stdout backstops would hide a call site that still puts a
-    token on its record, so the records are checked at the source too.
-    """
-    return [
-        record.getMessage()
-        for record in _captured_records
-        if token in repr(vars(record)) or token in record.getMessage()
-    ]
-
-
-_captured_records: list[logging.LogRecord] = []
-
-
-class _RecordCollector(logging.Handler):
-    def emit(self, record: logging.LogRecord) -> None:
-        _captured_records.append(record)
-
-
-@dataclass
-class Telemetry:
-    transport: _CaptureTransport
-    stdout: io.StringIO
-    item_types: set[str] = field(default_factory=set)
-
-    def flush(self) -> str:
-        """Flush Sentry and return everything emitted so far as one string."""
-        sentry_sdk.flush()
-        rendered = []
-        for envelope in self.transport.envelopes:
-            for item in envelope.items:
-                self.item_types.add(item.type or "")
-            rendered.append(envelope.serialize().decode("utf-8", "replace"))
-        return "\n".join(rendered) + "\n" + self.stdout.getvalue()
-
-
-@pytest.fixture
-def telemetry() -> Iterator[Telemetry]:
-    transport = _CaptureTransport()
-    options = sentry_init_options("https://public@example.invalid/1")
-    options.update(
-        traces_sample_rate=1.0, profiles_sample_rate=0.0, transport=transport
-    )
-    prior_client = sentry_sdk.get_client()
-    sentry_sdk.init(**options)
-
-    stdout = io.StringIO()
-    handler = logging.StreamHandler(stdout)
-    configurator = logging.config.DictConfigurator({"version": 1})
-    handler.setFormatter(
-        configurator.configure_formatter(
-            copy.deepcopy(LOGGING_CONFIG["formatters"]["default"])
-        )
-    )
-    collector = _RecordCollector()
-    _captured_records.clear()
-    # The root logger plus the configured loggers that do not propagate to it.
-    loggers = [logging.getLogger()] + [
-        logging.getLogger(name) for name in LOGGING_CONFIG["loggers"]
-    ]
-    prior_level = loggers[0].level
-    for logger in loggers:
-        logger.addHandler(handler)
-        logger.addHandler(collector)
-    loggers[0].setLevel(logging.INFO)
-    try:
-        yield Telemetry(transport, stdout)
-    finally:
-        for logger in loggers:
-            logger.removeHandler(collector)
-            logger.removeHandler(handler)
-        loggers[0].setLevel(prior_level)
-        sentry_sdk.get_client().close()
-        sentry_sdk.get_global_scope().set_client(prior_client)
 
 
 @pytest.fixture
@@ -193,7 +96,7 @@ async def test_sync_ack_logs_carry_no_token(telemetry, redis):
     assert "Dropped acks for a sync epoch" in emitted
     assert session_telemetry_id(token) in emitted
     assert token not in emitted
-    assert _records_with(token) == []
+    assert telemetry.records_with(token) == []
 
 
 @pytest.mark.anyio
@@ -217,7 +120,7 @@ async def test_websocket_lookup_failure_exception_carries_no_token(telemetry, re
     assert "SessionDataError" in telemetry.stdout.getvalue()
     assert session_telemetry_id(token) in emitted
     assert token not in emitted
-    assert _records_with(token) == []
+    assert telemetry.records_with(token) == []
 
 
 @pytest.mark.anyio
@@ -246,7 +149,7 @@ async def test_websocket_session_room_logs_carry_no_token(telemetry, redis):
     assert session_room in joined_rooms
     assert "is entering room" in emitted
     assert token not in emitted
-    assert _records_with(token) == []
+    assert telemetry.records_with(token) == []
     assert token not in str(sorted(joined_rooms))
 
 
@@ -313,26 +216,13 @@ async def test_failed_session_request_carries_no_token(telemetry, redis):
 
 
 @pytest.mark.anyio
-async def test_redis_failure_exception_carries_no_token(telemetry):
+async def test_redis_failure_exception_carries_no_token(telemetry, unreachable_redis):
     """redis-py's frames hold whole commands, where the token is a set member or
     a script argument with no `session:` prefix to recognize it by."""
-    import socket
-
-    import redis.asyncio
     import redis.exceptions
-    from redis.asyncio.retry import Retry
-    from redis.backoff import NoBackoff
 
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        closed_port = probe.getsockname()[1]
-    client = redis.asyncio.Redis(
-        port=closed_port,
-        socket_connect_timeout=0.2,
-        retry=Retry(NoBackoff(), retries=0),
-    )
     token = str(uuid4())
-    store = SessionStore(client)
+    store = SessionStore(unreachable_redis)
 
     for operation in (store.update_activity, store.delete_by_token):
         try:
@@ -341,7 +231,6 @@ async def test_redis_failure_exception_carries_no_token(telemetry):
             logging.getLogger(__name__).exception("Session write failed")
         else:
             raise AssertionError("expected the closed Redis port to fail")
-    await client.aclose()
 
     emitted = telemetry.flush()
 

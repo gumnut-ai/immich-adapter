@@ -50,8 +50,11 @@ async def test_record_expires_and_holds_neither_state_nor_secret(store, redis):
 
 
 @pytest.mark.anyio
-async def test_record_from_before_verifiers_were_stored_has_no_verifier(store, redis):
-    # A sign-in started before an upgrade and finished after it.
+async def test_record_written_before_verifiers_were_stored_has_no_verifier(
+    store, redis
+):
+    # Earlier releases stored "1" for every sign-in; one started before an
+    # upgrade and finished after it must still complete.
     await redis.set(_key("server-state", "secret"), "1")
 
     assert await store.find("server-state", "secret") == OAuthSignIn(None)
