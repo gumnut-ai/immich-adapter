@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-10-23
+last-updated: 2026-11-09
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -20,13 +20,20 @@ implementation mechanics.
 
 ## Credential custody and refresh
 
-OAuth login exchanges the client's callback with the Gumnut API. The adapter
-encrypts the returned JWT in Redis and returns a fresh UUID session token as
-`accessToken`, also setting auth cookies. The client-facing token is independent
-of the Gumnut JWT: refreshing that JWT changes server-side custody without
-changing the client's identity or checkpoint namespace. A stale or replayed
-callback rejected by the Gumnut API remains an HTTP 400 so the user can restart
-login. `routers/api/oauth.py` owns the exchange and response.
+OAuth login exchanges the callback with the Gumnut API only for the client
+that started the sign-in. The callback URL's `state` cannot show that, since
+anyone holding the URL has it, so at authorize the adapter records, in Redis,
+a secret paired with that state: a random value in a short-lived HttpOnly
+`immich_oauth_sign_in` cookie for browsers, and the client's own `state` for
+a native client that sent one (Immich mobile). Any other callback gets a 400
+before the exchange, which leaves the sign-in open for the client that
+started it. The adapter then encrypts the returned JWT in Redis and returns a
+fresh UUID session token as `accessToken`, also setting auth cookies. The
+client-facing token is independent of the Gumnut JWT: refreshing that JWT
+changes server-side custody without changing the client's identity or
+checkpoint namespace. A stale or replayed callback rejected by the Gumnut API
+remains an HTTP 400 so the user can restart login. `routers/api/oauth.py` owns
+the exchange and response.
 
 `AuthMiddleware` in `routers/middleware/auth_middleware.py` accepts session
 tokens through Bearer authorization, `x-immich-user-token`, or the

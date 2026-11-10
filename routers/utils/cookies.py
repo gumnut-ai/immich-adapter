@@ -2,6 +2,8 @@ from enum import Enum
 
 from fastapi import Response
 
+from services.oauth_sign_in_store import OAUTH_SIGN_IN_TTL_SECONDS
+
 # 400-day Max-Age on auth cookies. Without an explicit Max-Age these become
 # session cookies, which iOS HTTPCookieStorage holds in memory only and drops
 # on app process death — the upstream Immich server and iOS client both encode
@@ -14,6 +16,7 @@ class ImmichCookie(str, Enum):
     ACCESS_TOKEN = "immich_access_token"
     AUTH_TYPE = "immich_auth_type"
     IS_AUTHENTICATED = "immich_is_authenticated"
+    OAUTH_SIGN_IN = "immich_oauth_sign_in"
 
 
 class AuthType(str, Enum):
@@ -72,6 +75,28 @@ def set_auth_cookies(
         key=ImmichCookie.IS_AUTHENTICATED.value,
         value="true",
         max_age=COOKIE_MAX_AGE_SECONDS,
+        secure=secure,
+        samesite="lax",
+    )
+
+
+def set_oauth_sign_in_cookie(response: Response, secret: str, secure: bool) -> None:
+    """Give the browser starting OAuth sign-in the secret that lets it finish."""
+    response.set_cookie(
+        key=ImmichCookie.OAUTH_SIGN_IN.value,
+        value=secret,
+        max_age=OAUTH_SIGN_IN_TTL_SECONDS,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+    )
+
+
+def clear_oauth_sign_in_cookie(response: Response, secure: bool) -> None:
+    """Remove the OAuth sign-in cookie once sign-in completes."""
+    response.delete_cookie(
+        key=ImmichCookie.OAUTH_SIGN_IN.value,
+        httponly=True,
         secure=secure,
         samesite="lax",
     )

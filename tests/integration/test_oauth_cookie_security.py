@@ -9,6 +9,7 @@ from main import app
 from routers.utils.cookies import ImmichCookie
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_id
+from services.oauth_sign_in_store import get_oauth_sign_in_store
 from services.session_store import Session, SessionStore, get_session_store
 
 # Test UUIDs
@@ -21,7 +22,7 @@ class TestOAuthCookieSecurity:
     """Test that OAuth cookies have proper security flags."""
 
     @pytest.mark.anyio
-    async def test_oauth_callback_cookies_have_security_flags(self):
+    async def test_oauth_callback_cookies_have_security_flags(self, sign_in_store):
         """Verify all cookies from OAuth callback have secure flags."""
         # Mock the Gumnut client
         mock_gumnut_client = Mock()
@@ -56,6 +57,10 @@ class TestOAuthCookieSecurity:
 
         app.dependency_overrides[get_unauthenticated_gumnut_client] = mock_get_client
         app.dependency_overrides[get_session_store] = lambda: mock_session_store
+        app.dependency_overrides[get_oauth_sign_in_store] = lambda: sign_in_store
+        auth_url_result = Mock()
+        auth_url_result.url = "https://oauth.provider.com/authorize?state=xyz789"
+        mock_gumnut_client.oauth.auth_url = AsyncMock(return_value=auth_url_result)
 
         try:
             with patch("routers.api.oauth.parse_callback_url") as mock_parse:
@@ -67,6 +72,11 @@ class TestOAuthCookieSecurity:
 
                 # Use TestClient to make actual request with HTTPS base URL
                 client = TestClient(app, base_url="https://testserver")
+                # This browser starts the sign-in the callback completes.
+                client.post(
+                    "/api/oauth/authorize",
+                    json={"redirectUri": "http://localhost:3000/auth/callback"},
+                )
                 response = client.post(
                     "/api/oauth/callback",
                     json={
@@ -81,14 +91,16 @@ class TestOAuthCookieSecurity:
                 # Parse Set-Cookie headers from response
                 set_cookie_headers = response.headers.get_list("set-cookie")
 
-                # Should have 3 cookies: access_token, auth_type, is_authenticated
-                assert len(set_cookie_headers) == 3
+                # 3 auth cookies (access_token, auth_type, is_authenticated)
+                # plus the OAuth sign-in cookie being cleared
+                assert len(set_cookie_headers) == 4
 
                 # Check each cookie for security flags
                 cookie_checks = {
                     ImmichCookie.ACCESS_TOKEN.value: False,
                     ImmichCookie.AUTH_TYPE.value: False,
                     ImmichCookie.IS_AUTHENTICATED.value: False,
+                    ImmichCookie.OAUTH_SIGN_IN.value: False,
                 }
 
                 for cookie_header in set_cookie_headers:
@@ -131,6 +143,19 @@ class TestOAuthCookieSecurity:
                         ), f"is_authenticated missing SameSite=Lax: {cookie_header}"
                         # Note: is_authenticated doesn't have HttpOnly by design (may need to be accessible to JS)
                         cookie_checks[ImmichCookie.IS_AUTHENTICATED.value] = True
+
+                    # Check the cleared OAuth sign-in cookie
+                    elif f"{ImmichCookie.OAUTH_SIGN_IN.value}=" in cookie_header:
+                        assert "Max-Age=0" in cookie_header, (
+                            f"oauth_sign_in not cleared: {cookie_header}"
+                        )
+                        assert "HttpOnly" in cookie_header, (
+                            f"oauth_sign_in missing HttpOnly: {cookie_header}"
+                        )
+                        assert "Secure" in cookie_header or "secure" in cookie_header, (
+                            f"oauth_sign_in missing Secure: {cookie_header}"
+                        )
+                        cookie_checks[ImmichCookie.OAUTH_SIGN_IN.value] = True
 
                 # Verify all expected cookies were found
                 for cookie_name, found in cookie_checks.items():

@@ -43,3 +43,15 @@ def parse_callback_url(callback_url: str) -> dict[str, str | None]:
 
     except Exception as e:
         raise ValueError(f"Failed to parse OAuth callback URL: {e!s}")
+
+
+def extract_authorization_state(authorization_url: str) -> str:
+    """Return the ``state`` query parameter of an OAuth authorization URL.
+
+    Raises:
+        ValueError: If the URL has no non-empty ``state`` parameter
+    """
+    state = parse_qs(urlparse(authorization_url).query).get("state", [None])[0]
+    if not state:
+        raise ValueError("Authorization URL has no 'state' parameter")
+    return state
