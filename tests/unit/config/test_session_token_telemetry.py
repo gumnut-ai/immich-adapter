@@ -260,8 +260,8 @@ async def test_websocket_session_room_logs_carry_no_token(telemetry, redis):
 @pytest.mark.anyio
 async def test_closing_a_sessions_sockets_logs_carry_no_token(telemetry, redis):
     """Deleting a session disconnects its sockets: python-socketio logs each
-    disconnect and room exit at INFO, and a failed disconnect is logged with
-    its traceback and stack locals. None of them may hold the token."""
+    server disconnect at INFO, and a failed disconnect is logged at WARNING
+    with its traceback. None of them may hold the token."""
     store = SessionStore(redis)
     token = await _create_session(store)
     environ = {"HTTP_X_IMMICH_USER_TOKEN": token}

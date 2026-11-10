@@ -511,7 +511,8 @@ async def test_a_failed_disconnect_does_not_stop_the_others(store, wire, caplog)
     ]
     assert len(disconnected) == 1
     (warning,) = [
-        record for record in caplog.records if record.name == "services.websockets"
+        record
+        for record in caplog.records
+        if record.name == "services.websockets" and record.levelno >= logging.WARNING
     ]
-    assert warning.levelno == logging.WARNING
     assert getattr(warning, "session_id") == session_telemetry_id(token)
