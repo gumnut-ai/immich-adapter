@@ -49,7 +49,9 @@ later non-streaming request. Clients continue using the same UUID throughout.
 
 Logout clears auth cookies and attempts to delete the current session; a store
 failure is logged without preventing cookie clearing. Session management can
-also remove a specific session or all other sessions for a user. The HTTP
+also remove a specific session or all other sessions for a user. Every
+deletion also ends the deleted session's Socket.IO connections, as described in
+[Session revocation](websocket-implementation.md#session-revocation). The HTTP
 behavior and DTOs live in `routers/api/auth.py` and `routers/api/sessions.py`.
 
 Session management addresses a session by its

@@ -18,7 +18,7 @@ user room:    one user, all connected sessions
 session room: one adapter session, all sockets for that session
 ```
 
-User-scoped events update every connected device owned by the user. Session-scoped events target one login, which allows session revocation to tell only the affected client to disconnect. python-socketio logs room names at INFO, so the session room is named `session:<telemetry id>` (`config/telemetry.py::session_telemetry_id`) rather than the session's bearer token.
+User-scoped events update every connected device owned by the user. Session-scoped events target one login, which lets session revocation reach only the affected client's sockets (see [Session revocation](#session-revocation)). python-socketio logs room names at INFO, so the session room is named `session:<telemetry id>` (`config/telemetry.py::session_telemetry_id`) rather than the session's bearer token.
 
 The service retains a socket-ID-to-room mapping for disconnect cleanup and observability. It runs in the application's asyncio event loop; room membership and emission are delegated to python-socketio.
 
@@ -49,7 +49,8 @@ The connect handler:
 3. loads the session from Redis and rejects an expired or unknown session;
 4. joins the socket to the user and session rooms;
 5. records the socket mapping;
-6. emits the current server version to the connecting client.
+6. loads the session again and rejects the socket if it was deleted in the meantime (see [Session revocation](#session-revocation));
+7. emits the current server version to the connecting client.
 
 The client never sends the encrypted backend JWT to Socket.IO. Session custody and refresh are described in [Session and Checkpoint Implementation](session-checkpoint-implementation.md).
 
@@ -60,11 +61,23 @@ Callers use the public wrappers in `services/websockets.py`:
 - `emit_user_event` — one event to a user's room;
 - `emit_user_event_per_id` — concurrent one-ID events for wire contracts that require them;
 - `emit_session_event` — one event to a session room;
-- `emit_session_delete` — `on_session_delete` to a session room, carrying the session's public id rather than its token.
+- `close_session_sockets` — `on_session_delete` to a session room, carrying the session's public id rather than its token, then a server disconnect of every socket in that room.
 
 Pydantic payloads are serialized with `model_dump(mode="json")`, so UUIDs, datetimes, and enums use their JSON forms. Callers should pass typed DTOs or the explicitly supported scalar/list shapes instead of pre-serializing arbitrary JSON.
 
 Event payload and trigger details deliberately live in the [event reference](../references/websocket-events-reference.md). That reference and the affected router call site must move together when an event's timing changes.
+
+## Session revocation
+
+Logout, `DELETE /api/sessions` and `DELETE /api/sessions/{id}` delete the session from Redis and then call `close_session_sockets` for each deleted session. It emits `on_session_delete` first, so the web client can run its logout navigation, and then disconnects every socket in the session room. A disconnect removes the socket from all of its rooms, including the user room, so the deleted session stops receiving the user's events even if its client ignores `on_session_delete`; leaving only the session room would not.
+
+Neither Immich client retries a server-initiated disconnect: web reconnects after the next login, and mobile builds a new socket when it next connects. A reconnect with the deleted token is rejected by the connect handler. Deleting all other sessions never targets the caller's own session, so the caller's sockets stay connected.
+
+OAuth login creates sessions without a Redis TTL, so a session does not expire on its own while a socket is connected; a session created with an expiry would need its own disconnect.
+
+The connect handler reads the session again after joining its rooms, so a socket that connects while its session is being deleted is either closed with the session room or refused.
+
+The server uses python-socketio's default in-memory client manager, so revocation, like every emit, reaches only sockets connected to the process that handled the request, not sockets connected to another instance of the service.
 
 ## Delivery and failure semantics
 
@@ -82,4 +95,4 @@ Bulk writes that return no updated asset payload normally skip an extra read sol
 
 ## Verification
 
-`tests/unit/api/test_websockets.py` covers credential precedence, connection rejection/acceptance, room membership, disconnect cleanup, serialization, targeting, and swallowed transport failures. Runtime protocol configuration is pinned separately by `tests/unit/config/test_uvicorn_ws_config.py`.
+`tests/unit/api/test_websockets.py` covers credential precedence, connection rejection/acceptance, room membership, disconnect cleanup, serialization, targeting, and swallowed transport failures. `tests/unit/api/test_session_ids.py` drives each revocation route against the real Socket.IO room manager and checks that a deleted session's sockets receive no later user events while the caller's do. Runtime protocol configuration is pinned separately by `tests/unit/config/test_uvicorn_ws_config.py`.
