@@ -308,5 +308,8 @@ async def test_another_users_session_in_the_index_is_not_the_callers(store):
     await store._redis.sadd(f"user:{USER_ID}:sessions", str(theirs.token))
 
     assert await store.get_by_user(USER_ID) == []
+    # Skipping it must not drop its owner's activity-index entry.
+    redis = store._redis
+    assert await redis.zscore("sessions:by_updated_at", str(theirs.token)) is not None
     assert await store.get_user_session(USER_ID, theirs.id) is None
     assert await store.get_user_session(OTHER_USER_ID, theirs.id) == theirs
