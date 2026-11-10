@@ -11,9 +11,9 @@ from routers.api.sync.stream import (
     _DELETE_TYPE_ORDER,
     _NOOP_REQUEST_TYPES,
     _SUPPORTED_REQUEST_TYPES,
-    _SYNC_TYPE_ORDER,
     generate_sync_stream,
 )
+from routers.api.sync.type_order import SYNC_TYPE_ORDER
 from routers.immich_models import SyncEntityType, SyncRequestType, SyncStreamDto
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
@@ -441,34 +441,32 @@ class TestUpsertsBeforeDeletes:
 
 
 class TestGumnutTypeToSyncTypeConsistency:
-    """Ensure _GUMNUT_TYPE_TO_SYNC_TYPES in fk_integrity stays aligned with _SYNC_TYPE_ORDER in stream."""
+    """Ensure FK checkpoint types cover the canonical sync order."""
 
     def test_fk_integrity_map_matches_stream_order(self):
-        """The duplicated _GUMNUT_TYPE_TO_SYNC_TYPES must cover every gumnut
-        entity type in _SYNC_TYPE_ORDER, and each mapped sync type must appear
-        among that entity's entries in _SYNC_TYPE_ORDER."""
-        # Build a mapping of gumnut_type -> set of all sync types in _SYNC_TYPE_ORDER
+        """Every ordered sync type is recognized by FK checkpoint lookups."""
+        # Build a mapping of Gumnut entity type to its sync types.
         stream_types: dict[str, set] = {}
-        for _, gumnut_type, sync_type in _SYNC_TYPE_ORDER:
+        for _, gumnut_type, sync_type in SYNC_TYPE_ORDER:
             stream_types.setdefault(gumnut_type, set()).add(sync_type)
 
-        # Every gumnut type in _SYNC_TYPE_ORDER must be in the FK map
+        # Every Gumnut type in the canonical order must be in the FK map.
         for gumnut_type in stream_types:
             assert gumnut_type in _GUMNUT_TYPE_TO_SYNC_TYPES, (
-                f"gumnut type {gumnut_type!r} in _SYNC_TYPE_ORDER but missing "
+                f"gumnut type {gumnut_type!r} in SYNC_TYPE_ORDER but missing "
                 f"from _GUMNUT_TYPE_TO_SYNC_TYPES"
             )
 
-        # Every entry in the FK map must reference valid sync types from _SYNC_TYPE_ORDER
+        # Every entry in the FK map must come from the canonical order.
         for gumnut_type, sync_types in _GUMNUT_TYPE_TO_SYNC_TYPES.items():
             assert gumnut_type in stream_types, (
                 f"gumnut type {gumnut_type!r} in _GUMNUT_TYPE_TO_SYNC_TYPES but "
-                f"missing from _SYNC_TYPE_ORDER"
+                "missing from SYNC_TYPE_ORDER"
             )
             for sync_type in sync_types:
                 assert sync_type in stream_types[gumnut_type], (
                     f"_GUMNUT_TYPE_TO_SYNC_TYPES[{gumnut_type!r}] contains {sync_type!r} "
-                    f"not in _SYNC_TYPE_ORDER entries: {stream_types[gumnut_type]}"
+                    f"not in SYNC_TYPE_ORDER entries: {stream_types[gumnut_type]}"
                 )
 
 

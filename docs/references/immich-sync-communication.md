@@ -1,6 +1,6 @@
 ---
 title: "Immich Sync Wire Reference"
-last-updated: 2026-10-23
+last-updated: 2026-11-10
 ---
 
 # Immich Sync Wire Reference
@@ -22,7 +22,11 @@ This reference describes the Immich v3 sync shapes the adapter accepts and emits
 - `reset=true` clears the session's current sync epoch's stored checkpoints
   before normal streaming. The [required client-reset gate](../architecture/session-checkpoint-implementation.md#library-and-epoch-isolation)
   takes precedence.
-- The adapter implements some request types, synthesizes user metadata, and explicitly accepts unsupported feature families as no-ops. `_SYNC_TYPE_ORDER`, `_NOOP_REQUEST_TYPES`, and `_SUPPORTED_REQUEST_TYPES` in `routers/api/sync/stream.py` own that classification.
+- The adapter implements some request types, synthesizes user metadata, and
+  explicitly accepts unsupported feature families as no-ops.
+  `SYNC_TYPE_ORDER` in `routers/api/sync/type_order.py` defines implemented
+  request-to-entity mappings and upsert order. No-op and synthesized request
+  classifications remain in `routers/api/sync/stream.py`.
 - When both V1 and its supported V2 successor are requested, `_V1_SUPERSEDED_BY_V2` suppresses the duplicate V1 pass.
 
 ## Stream response
@@ -45,7 +49,8 @@ Use these sources instead of a copied exhaustive mapping:
 
 - `routers/immich_models.py::SyncRequestType` — accepted request enum.
 - `routers/immich_models.py::SyncEntityType` — ack and response entity enum.
-- `routers/api/sync/stream.py::_SYNC_TYPE_ORDER` — implemented request-to-entity mapping and FK-safe order.
+- `routers/api/sync/type_order.py::SYNC_TYPE_ORDER` — implemented request-to-entity
+  mapping and upsert dependency order.
 - `routers/api/sync/stream.py::_NOOP_REQUEST_TYPES` — accepted request types with no Gumnut equivalent.
 - `routers/api/sync/events.py::convert_entity_to_sync_event` — entity-to-generated-model dispatch.
 - `docs/architecture/sync-stream-architecture.md` — why the order and derived streams exist.

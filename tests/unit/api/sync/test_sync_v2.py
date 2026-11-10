@@ -25,9 +25,9 @@ from routers.api.sync.stream import (
     _DERIVED_UPSERT_ONLY_TYPES,
     _NOOP_REQUEST_TYPES,
     _SUPPORTED_REQUEST_TYPES,
-    _SYNC_TYPE_ORDER,
     _V1_SUPERSEDED_BY_V2,
 )
+from routers.api.sync.type_order import SYNC_TYPE_ORDER
 from routers.immich_models import (
     SyncAlbumUserV1,
     SyncAlbumV1,
@@ -95,12 +95,12 @@ def test_stream_order_maps_assets_v2_and_albums_v2():
         SyncRequestType.AssetsV2,
         "asset",
         SyncEntityType.AssetV2,
-    ) in _SYNC_TYPE_ORDER
+    ) in SYNC_TYPE_ORDER
     assert (
         SyncRequestType.AlbumsV2,
         "album",
         SyncEntityType.AlbumV2,
-    ) in _SYNC_TYPE_ORDER
+    ) in SYNC_TYPE_ORDER
 
 
 def test_v1_superseded_by_v2_covers_assets_albums_faces():
@@ -126,7 +126,7 @@ def test_ocr_partner_album_asset_v2_are_accepted_noops():
     assert noop_types <= set(_NOOP_REQUEST_TYPES)
     assert noop_types <= _SUPPORTED_REQUEST_TYPES
     # ...but never streamed (absent from the entity-producing order).
-    streamed_request_types = {rt for rt, _, _ in _SYNC_TYPE_ORDER}
+    streamed_request_types = {rt for rt, _, _ in SYNC_TYPE_ORDER}
     assert noop_types.isdisjoint(streamed_request_types)
 
 
@@ -140,27 +140,27 @@ def test_event_conversion_routes_v2_entities():
 
 
 # --- Invariants: keep the V2 rollout consistent across the sync package ------
-# Adding a V2 to _SYNC_TYPE_ORDER means it must also be routed in events, kept in
-# the FK-checkpoint map, and (for the album/face causal-consistency overrides)
-# covered by those overrides — these guard against the half-wired V2 rollout.
+# Adding a V2 to SYNC_TYPE_ORDER means it must also be routed in events and
+# (for the album/face causal-consistency overrides) covered by those overrides.
+# FK checkpoint versions are derived from the same order table.
 
 
 def test_fk_checkpoint_map_covers_every_streamed_type():
-    """Every _SYNC_TYPE_ORDER entity type is in the FK checkpoint map for its
+    """Every ordered sync entity type is in the FK checkpoint map for its
     gumnut type, so a client that synced under V2 still matches on checkpoint
     lookups (else FK reference checks emit spurious warnings)."""
-    for _req, gumnut_type, sync_type in _SYNC_TYPE_ORDER:
+    for _req, gumnut_type, sync_type in SYNC_TYPE_ORDER:
         assert sync_type in _GUMNUT_TYPE_TO_SYNC_TYPES.get(gumnut_type, []), (
             f"{sync_type} missing from _GUMNUT_TYPE_TO_SYNC_TYPES[{gumnut_type!r}]"
         )
 
 
 def test_events_routing_references_every_streamed_v2_type():
-    """Every V2 entity type in _SYNC_TYPE_ORDER is dispatched in the event
+    """Every V2 entity type in SYNC_TYPE_ORDER is dispatched in the event
     converter — a V2 added to the order but not routed would silently stream
     as V1 (the converter falls through to the V1 branch)."""
     routing_src = inspect.getsource(events.convert_entity_to_sync_event)
-    v2_types = [st for _r, _g, st in _SYNC_TYPE_ORDER if st.value.endswith("V2")]
+    v2_types = [st for _r, _g, st in SYNC_TYPE_ORDER if st.value.endswith("V2")]
     assert v2_types  # guard against the filter silently matching nothing
     for sync_type in v2_types:
         assert f"SyncEntityType.{sync_type.name}" in routing_src, (
@@ -189,11 +189,11 @@ def test_album_users_v1_streamed_from_album_entity():
         SyncRequestType.AlbumUsersV1,
         "album",
         SyncEntityType.AlbumUserV1,
-    ) in _SYNC_TYPE_ORDER
+    ) in SYNC_TYPE_ORDER
     # Requested by the client, so it must not be logged as unsupported.
     assert SyncRequestType.AlbumUsersV1 in _SUPPORTED_REQUEST_TYPES
     # FK ordering: album (AlbumsV2) must be streamed before its owner link.
-    order = [st for _r, _g, st in _SYNC_TYPE_ORDER]
+    order = [st for _r, _g, st in SYNC_TYPE_ORDER]
     assert order.index(SyncEntityType.AlbumV2) < order.index(SyncEntityType.AlbumUserV1)
 
 
@@ -240,7 +240,7 @@ def test_requested_empty_v3_types_are_explicit_noops():
     assert empty_requested <= set(_NOOP_REQUEST_TYPES)
     assert empty_requested <= _SUPPORTED_REQUEST_TYPES
     # Never streamed (absent from the entity-producing order).
-    streamed = {rt for rt, _, _ in _SYNC_TYPE_ORDER}
+    streamed = {rt for rt, _, _ in SYNC_TYPE_ORDER}
     assert empty_requested.isdisjoint(streamed)
     # UserMetadataV1 is emitted, so it must NOT be a no-op, but still supported.
     assert SyncRequestType.UserMetadataV1 not in _NOOP_REQUEST_TYPES
