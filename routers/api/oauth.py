@@ -1,4 +1,5 @@
 import logging
+import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -17,11 +18,18 @@ from routers.immich_models import (
     UserResponseDto,
     UserStatus,
 )
-from routers.utils.cookies import AuthType, set_auth_cookies
+from routers.utils.cookies import (
+    AuthType,
+    ImmichCookie,
+    clear_oauth_sign_in_cookie,
+    set_auth_cookies,
+    set_oauth_sign_in_cookie,
+)
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
-from routers.utils.oauth_utils import parse_callback_url
+from routers.utils.oauth_utils import extract_authorization_state, parse_callback_url
+from services.oauth_sign_in_store import OAuthSignInStore, get_oauth_sign_in_store
 from services.session_store import SessionStore, get_session_store
 from utils.jwt_encryption import JWTEncryptionError
 from utils.user_agent import extract_device_info
@@ -81,7 +89,9 @@ def rewrite_redirect_uri(uri: str, request: Request) -> str:
 async def start_oauth(
     oauth_config: OAuthConfigDto,
     request: Request,
+    response: Response,
     client: AsyncGumnut = Depends(get_unauthenticated_gumnut_client),
+    sign_in_store: OAuthSignInStore = Depends(get_oauth_sign_in_store),
 ) -> OAuthAuthorizeResponseDto:
     """
     Start OAuth authentication process.
@@ -89,6 +99,9 @@ async def start_oauth(
     Forwards the request to the Gumnut backend to get the OAuth provider
     authorization URL. The backend generates a CSRF state token and builds
     the complete authorization URL.
+
+    Records who started the sign-in so only that client can finish it; see
+    ``_callback_is_bound``.
 
     Args:
         oauth_config: Configuration containing redirect URI and optional PKCE parameters
@@ -108,6 +121,15 @@ async def start_oauth(
             extra_headers={"Authorization": omit},  # Omit auth for this request
         )
 
+        server_state = extract_authorization_state(result.url)
+        browser_secret = secrets.token_urlsafe(32)
+        await sign_in_store.bind(server_state, browser_secret)
+        if oauth_config.state:
+            await sign_in_store.bind(server_state, oauth_config.state)
+        set_oauth_sign_in_cookie(
+            response, browser_secret, secure=request.url.scheme == "https"
+        )
+
         return OAuthAuthorizeResponseDto(url=result.url)
 
     except Exception as e:
@@ -121,6 +143,33 @@ async def start_oauth(
         )
 
 
+async def _callback_is_bound(
+    request: Request,
+    oauth_callback: OAuthCallbackDto,
+    server_state: str | None,
+    sign_in_store: OAuthSignInStore,
+) -> bool:
+    """Return whether this callback comes from the client that started sign-in.
+
+    The callback URL's ``state`` alone proves nothing: whoever holds the URL
+    has it. The caller must also present a secret recorded for that state at
+    authorize. Browsers present the random value from the HttpOnly sign-in
+    cookie. Native clients (Immich mobile) present the ``state`` they
+    generated and sent at authorize; upstream Immich's server checks that
+    value against the callback URL, but here the Gumnut API mints the URL's
+    state, so the adapter checks the pairing it recorded instead.
+    """
+    if not server_state:
+        return False
+    for secret in (
+        request.cookies.get(ImmichCookie.OAUTH_SIGN_IN.value),
+        oauth_callback.state,
+    ):
+        if secret and await sign_in_store.is_bound(server_state, secret):
+            return True
+    return False
+
+
 @router.post("/callback", status_code=201)
 async def finish_oauth(
     oauth_callback: OAuthCallbackDto,
@@ -128,6 +177,7 @@ async def finish_oauth(
     response: Response,
     client: AsyncGumnut = Depends(get_unauthenticated_gumnut_client),
     session_store: SessionStore = Depends(get_session_store),
+    sign_in_store: OAuthSignInStore = Depends(get_oauth_sign_in_store),
 ) -> LoginResponseDto:
     """
     Finish OAuth authentication process.
@@ -136,6 +186,10 @@ async def finish_oauth(
     forwards them to the backend for token exchange, receives the JWT and user
     info, creates a session with encrypted JWT storage, sets authentication
     cookies with the session token, and returns the login response.
+
+    The callback must come from the client that started sign-in (see
+    ``_callback_is_bound``); otherwise it is rejected with 400 before the
+    code is exchanged, which leaves the sign-in open for that client.
 
     The session token (UUID) is returned as the accessToken.
     This decouples client authentication from the JWT, allowing JWT refresh
@@ -158,6 +212,22 @@ async def finish_oauth(
         logger.error("Failed to parse OAuth callback URL", extra={"error": str(e)})
         raise HTTPException(
             status_code=400, detail="OAuth authentication failed. Please try again."
+        )
+
+    if not await _callback_is_bound(
+        request, oauth_callback, parsed["state"], sign_in_store
+    ):
+        logger.warning(
+            "OAuth callback not bound to the client that started sign-in",
+            extra={
+                "has_sign_in_cookie": ImmichCookie.OAUTH_SIGN_IN.value
+                in request.cookies,
+                "has_client_state": oauth_callback.state is not None,
+            },
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth sign-in could not be verified. Please start sign-in again.",
         )
 
     try:
@@ -199,9 +269,9 @@ async def finish_oauth(
         session_token = str(session.id)
 
         # Set authentication cookies with session token
-        set_auth_cookies(
-            response, session_token, AuthType.OAUTH, request.url.scheme == "https"
-        )
+        secure = request.url.scheme == "https"
+        set_auth_cookies(response, session_token, AuthType.OAUTH, secure)
+        clear_oauth_sign_in_cookie(response, secure)
 
         if result.user.first_name or result.user.last_name:
             name = (

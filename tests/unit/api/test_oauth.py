@@ -10,7 +10,9 @@ from starlette.datastructures import URL
 
 from routers.api.oauth import finish_oauth, rewrite_redirect_uri
 from routers.immich_models import OAuthCallbackDto
+from routers.utils.cookies import ImmichCookie
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_id
+from services.oauth_sign_in_store import OAuthSignInStore
 from services.session_store import SessionStore
 from tests.conftest import make_sdk_status_error
 
@@ -159,10 +161,18 @@ class TestFinishOAuth:
         return client
 
     @pytest.fixture
+    def mock_sign_in_store(self):
+        """A store in which only the browser's sign-in cookie is recorded."""
+        store = AsyncMock(spec=OAuthSignInStore)
+        store.is_bound.side_effect = lambda state, secret: secret == "browser-secret"
+        return store
+
+    @pytest.fixture
     def mock_request(self):
-        """Create a mock request."""
+        """Create a mock request from the browser that started sign-in."""
         request = Mock()
         request.headers = {}
+        request.cookies = {ImmichCookie.OAUTH_SIGN_IN.value: "browser-secret"}
         request.url = Mock()
         request.url.scheme = "https"
         return request
@@ -174,7 +184,12 @@ class TestFinishOAuth:
 
     @pytest.mark.anyio
     async def test_creates_session_on_successful_oauth(
-        self, mock_request, mock_response, mock_gumnut_client, mock_session_store
+        self,
+        mock_request,
+        mock_response,
+        mock_gumnut_client,
+        mock_session_store,
+        mock_sign_in_store,
     ):
         """Test that session is created on successful OAuth callback."""
         # Setup mock OAuth exchange result
@@ -211,6 +226,7 @@ class TestFinishOAuth:
                 response=mock_response,
                 client=mock_gumnut_client,
                 session_store=mock_session_store,
+                sign_in_store=mock_sign_in_store,
             )
 
         # Verify session was created with correct device info
@@ -227,7 +243,12 @@ class TestFinishOAuth:
 
     @pytest.mark.anyio
     async def test_login_fails_if_session_creation_fails(
-        self, mock_request, mock_response, mock_gumnut_client, mock_session_store
+        self,
+        mock_request,
+        mock_response,
+        mock_gumnut_client,
+        mock_session_store,
+        mock_sign_in_store,
     ):
         """Test that login fails if session creation fails.
 
@@ -271,6 +292,7 @@ class TestFinishOAuth:
                     response=mock_response,
                     client=mock_gumnut_client,
                     session_store=mock_session_store,
+                    sign_in_store=mock_sign_in_store,
                 )
 
             assert exc_info.value.status_code == 500
@@ -278,7 +300,12 @@ class TestFinishOAuth:
 
     @pytest.mark.anyio
     async def test_backend_rejection_propagates_to_global_handler(
-        self, mock_request, mock_response, mock_gumnut_client, mock_session_store
+        self,
+        mock_request,
+        mock_response,
+        mock_gumnut_client,
+        mock_session_store,
+        mock_sign_in_store,
     ):
         """A backend 400 on token exchange propagates, bypassing the 500 arm.
 
@@ -313,6 +340,7 @@ class TestFinishOAuth:
                     response=mock_response,
                     client=mock_gumnut_client,
                     session_store=mock_session_store,
+                    sign_in_store=mock_sign_in_store,
                 )
 
         # No session must be created for a rejected exchange

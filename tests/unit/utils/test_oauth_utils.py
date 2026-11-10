@@ -1,6 +1,6 @@
 import pytest
 
-from routers.utils.oauth_utils import parse_callback_url
+from routers.utils.oauth_utils import extract_authorization_state, parse_callback_url
 
 
 class TestParseCallbackUrl:
@@ -132,3 +132,21 @@ class TestParseCallbackUrl:
         assert result["code"] == "first"  # parse_qs returns first value
         assert result["state"] == "xyz789"
         assert result["error"] is None
+
+
+class TestExtractAuthorizationState:
+    def test_returns_state(self):
+        url = "https://idp.example.com/authorize?client_id=c&state=xyz789&nonce=n"
+
+        assert extract_authorization_state(url) == "xyz789"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://idp.example.com/authorize?client_id=c",
+            "https://idp.example.com/authorize?client_id=c&state=",
+        ],
+    )
+    def test_missing_or_empty_state_raises(self, url):
+        with pytest.raises(ValueError):
+            extract_authorization_state(url)

@@ -15,3 +15,13 @@ def mock_redis_connection_check():
     """
     with patch("main.check_redis_connection", new_callable=AsyncMock) as mock:
         yield mock
+
+
+@pytest.fixture
+def sign_in_store():
+    """A real OAuthSignInStore on an in-memory Redis."""
+    import fakeredis
+
+    from services.oauth_sign_in_store import OAuthSignInStore
+
+    return OAuthSignInStore(fakeredis.FakeAsyncRedis(decode_responses=True))
