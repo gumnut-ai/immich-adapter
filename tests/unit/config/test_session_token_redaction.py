@@ -185,3 +185,26 @@ def test_hooks_drop_the_payload_when_scrubbing_fails(monkeypatch, hook, payload)
     monkeypatch.setattr("config.sentry.redact_session_tokens", fail)
 
     assert hook(payload, {}) is None
+
+
+def test_log_hook_substitutes_structured_session_fields_and_signed_urls():
+    """CDN redaction of object-valued log attributes must leave UUIDs, lists
+    and nested fields for the session-token rules."""
+    signed = "https://cdn.example.test/a.jpg?w=720&verify=SYNTHETICCDNTOKEN"
+    url = type("URLLike", (), {"__repr__": lambda self: f"URLLike('{signed}')"})()
+    log: Any = {
+        "body": "fetch failed",
+        "attributes": {
+            "session_id": [UUID(TOKEN)],
+            "payload": {"session_id": TOKEN},
+            "headers": [["x-immich-user-token", TOKEN]],
+            "cdn_url": url,
+        },
+    }
+
+    result = _before_send_log(log, {})
+
+    assert TOKEN not in repr(result)
+    assert "SYNTHETICCDNTOKEN" not in repr(result)
+    assert result["attributes"]["session_id"] == [REF]
+    assert "w=720&verify=REDACTED" in result["attributes"]["cdn_url"]

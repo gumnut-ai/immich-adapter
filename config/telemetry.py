@@ -6,6 +6,8 @@ from typing import Any
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 from uuid import UUID
 
+from sentry_sdk.utils import safe_repr
+
 _SENSITIVE_CDN_QUERY_KEYS = frozenset({"dl", "verify"})
 _REDACTED_QUERY_VALUE = "REDACTED"
 _URL_IN_TEXT = re.compile(r"https?://\S+")
@@ -61,7 +63,12 @@ def redact_sensitive_cdn_values(value: Any) -> Any:
         return {key: redact_sensitive_cdn_values(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [redact_sensitive_cdn_values(item) for item in value]
-    return value
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    # A log's `extra=` values reach the log hook as objects, such as an
+    # `httpx.URL`, and the SDK reprs them only afterwards. The session-token
+    # rules below read a `UUID` repr as a token too.
+    return redact_sensitive_cdn_text(safe_repr(value))
 
 
 # A session's bearer token is its UUID, so it is indistinguishable from an
@@ -85,8 +92,9 @@ _SESSION_TOKEN_IN_TEXT = re.compile(
     r"|sessions:by_updated_at\s+(?:[0-9.eE+-]+\s+)?)"
     rf"({_UUID})"
 )
-# Serialized frame locals arrive as reprs (`'<uuid>'`, `b'<uuid>'`,
-# `UUID('<uuid>')`); extras and log attributes as the values themselves.
+# Serialized frame locals and object-valued log attributes arrive as reprs
+# (`'<uuid>'`, `b'<uuid>'`, `UUID('<uuid>')`); other extras and log
+# attributes as the values themselves.
 _QUOTED = re.compile(r"^(?:b|UUID\()?(['\"])(.*)\1\)?$", re.DOTALL)
 _BARE_SESSION_TOKEN = re.compile(rf"^{_UUID}$")
 _SESSION_TOKEN_FIELDS = frozenset(
