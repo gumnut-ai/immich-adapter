@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import sentry_sdk
 from sentry_sdk.types import Event, Hint
+from sentry_sdk.utils import iter_event_frames
 
 from config.settings import get_settings
 from config.telemetry import (
@@ -17,29 +18,27 @@ from config.telemetry import (
 
 logger = logging.getLogger(__name__)
 
-# Modules whose stack frames can hold a session bearer token in locals under
-# arbitrary names: `session_token`, `session_uuid`, a session route's `id`
-# path parameter, and the ASGI `scope` or Socket.IO `environ`, which carry the
-# request headers and path parameters. `include_local_variables` stays at its
-# default (True) and the SDK scrubber matches only exact well-known names, so
-# the locals of these frames are dropped wholesale. A new module that handles
-# session tokens belongs here.
+# Stack locals can hold a session bearer token under arbitrary names:
+# `session_token`, `session_uuid`, a session route's `id` path parameter, the
+# ASGI `scope` and Socket.IO `environ` (request headers and path parameters),
+# redis-py's command arguments. `include_local_variables` stays at its default
+# (True) and the SDK scrubber matches only exact well-known names, so locals are
+# dropped wholesale from every library and standard-library frame (`in_app` not
+# true), and from the adapter's own frames in the modules below. A new adapter
+# module that handles session tokens belongs here.
 _SESSION_TOKEN_MODULES = (
     "routers.api.auth",
     "routers.api.oauth",
     "routers.api.sessions",
     "routers.api.sync.routes",
     "routers.middleware",
+    "routers.utils.cookies",
     "routers.utils.gumnut_client",
     "routers.utils.thumbnail_cache",
     "services.checkpoint_store",
     "services.library_resolver",
     "services.session_store",
     "services.websockets",
-    "engineio",
-    "fastapi",
-    "socketio",
-    "starlette",
 )
 
 
@@ -50,23 +49,19 @@ def _in_session_token_module(module: object) -> bool:
     )
 
 
-def _scrub_session_tokens(event: Any) -> None:
-    """Drop token-bearing frame locals, then substitute any session token left
-    in the payload with its telemetry id (see `config.telemetry`)."""
-    for container in ("exception", "threads"):
-        values = event.get(container)
-        values = values.get("values") if isinstance(values, dict) else None
-        for value in values if isinstance(values, list) else []:
-            stacktrace = value.get("stacktrace") if isinstance(value, dict) else None
-            frames = stacktrace.get("frames") if isinstance(stacktrace, dict) else None
-            for frame in frames if isinstance(frames, list) else []:
-                if (
-                    isinstance(frame, dict)
-                    and "vars" in frame
-                    and _in_session_token_module(frame.get("module"))
-                ):
-                    frame["vars"] = {"scrubbed": "[Filtered]"}
-    redact_session_tokens(event)
+def _keeps_frame_vars(frame: dict[str, Any]) -> bool:
+    return frame.get("in_app") is True and not _in_session_token_module(
+        frame.get("module")
+    )
+
+
+def _scrub_session_tokens(event: Any) -> Any:
+    """Drop stack locals that may hold a session token, then substitute any
+    token left in the payload with its telemetry id (see `config.telemetry`)."""
+    for frame in iter_event_frames(event):
+        if isinstance(frame, dict) and "vars" in frame and not _keeps_frame_vars(frame):
+            frame["vars"] = {"scrubbed": "[Filtered]"}
+    return redact_session_tokens(event)
 
 
 def _redact_error_event(event: Event, _hint: Hint) -> Event | None:
@@ -89,18 +84,17 @@ def _redact_error_event(event: Event, _hint: Hint) -> Event | None:
     with contextlib.suppress(Exception):
         redact(event)
     try:
-        _scrub_session_tokens(event)
+        return _scrub_session_tokens(event)
     except Exception:
         # A session token is a live credential: drop the event rather than
         # risk sending one.
         return None
-    return event
 
 
 def _before_send_transaction(event: Event, hint: Hint) -> Event | None:
     """Scrub session tokens from spans and request data, then enrich spans."""
     try:
-        _scrub_session_tokens(event)
+        event = _scrub_session_tokens(event)
     except Exception:
         return None
     return _enrich_http_spans(event, hint)

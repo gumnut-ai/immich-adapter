@@ -27,12 +27,11 @@ under `session_id`: it is stable per session, cannot be reversed, and matches
 the `session:<id>` cache keys that spans show.
 
 `config/sentry.py` and the stdout formatter in `config/logging.py` back this up
-by substituting tokens that context marks as such — Redis keys, session routes,
-`Bearer` and `immich_access_token` credentials, and the `session_id`,
-`session_token` and `x-immich-user-token` fields — and Sentry drops the stack
-locals of the modules in `_SESSION_TOKEN_MODULES`. A bare token under any other
-field name, or in a module missing from that list, still leaks, so add new
-session-handling modules there.
+by substituting tokens that context marks as such (the rules are in
+`config/telemetry.py`), and Sentry drops the stack locals of library frames and
+of the adapter modules in `_SESSION_TOKEN_MODULES`. A bare token under an
+unrecognized field name, or in a local of an unlisted adapter module, still
+leaks, so add new session-handling modules to that list.
 
 ## Upstream response log levels
 

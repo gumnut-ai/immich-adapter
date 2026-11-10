@@ -26,10 +26,14 @@ from sentry_sdk.transport import Transport
 from config.logging import LOGGING_CONFIG
 from config.sentry import sentry_init_options
 from config.telemetry import session_telemetry_id
+
+# Importing the app applies the production logging config (non-propagating
+# uvicorn loggers) at collection, whatever order the suite runs in.
+from main import app
 from routers.api.sync.routes import send_sync_ack
 from routers.immich_models import SyncAckSetDto, SyncEntityType
 from services.checkpoint_store import CheckpointStore
-from services.session_store import SessionStore
+from services.session_store import SessionStore, SessionStoreError
 from services.websockets import WebSocketEvent, connect, emit_session_event, sio
 
 
@@ -87,6 +91,7 @@ def telemetry() -> Iterator[Telemetry]:
     options.update(
         traces_sample_rate=1.0, profiles_sample_rate=0.0, transport=transport
     )
+    prior_client = sentry_sdk.get_client()
     sentry_sdk.init(**options)
 
     stdout = io.StringIO()
@@ -99,19 +104,24 @@ def telemetry() -> Iterator[Telemetry]:
     )
     collector = _RecordCollector()
     _captured_records.clear()
-    root = logging.getLogger()
-    prior_level = root.level
-    root.addHandler(handler)
-    root.addHandler(collector)
-    root.setLevel(logging.INFO)
+    # The root logger plus the configured loggers that do not propagate to it.
+    loggers = [logging.getLogger()] + [
+        logging.getLogger(name) for name in LOGGING_CONFIG["loggers"]
+    ]
+    prior_level = loggers[0].level
+    for logger in loggers:
+        logger.addHandler(handler)
+        logger.addHandler(collector)
+    loggers[0].setLevel(logging.INFO)
     try:
         yield Telemetry(transport, stdout)
     finally:
-        root.removeHandler(collector)
-        root.removeHandler(handler)
-        root.setLevel(prior_level)
+        for logger in loggers:
+            logger.removeHandler(collector)
+            logger.removeHandler(handler)
+        loggers[0].setLevel(prior_level)
         sentry_sdk.get_client().close()
-        sentry_sdk.init()
+        sentry_sdk.get_global_scope().set_client(prior_client)
 
 
 @pytest.fixture
@@ -267,7 +277,6 @@ async def test_failed_session_request_carries_no_token(telemetry, redis):
     resolution) all see the token."""
     from httpx import ASGITransport, AsyncClient
 
-    from main import app
     from routers.utils.current_user import get_current_user_id
 
     store = SessionStore(redis)
@@ -300,4 +309,42 @@ async def test_failed_session_request_carries_no_token(telemetry, redis):
     assert {"event", "transaction"} <= telemetry.item_types
     assert "user lookup failed" in emitted
     assert f"/api/sessions/{session_telemetry_id(token)}" in emitted
+    assert token not in emitted
+
+
+@pytest.mark.anyio
+async def test_redis_failure_exception_carries_no_token(telemetry):
+    """redis-py's frames hold whole commands, where the token is a set member or
+    a script argument with no `session:` prefix to recognize it by."""
+    import socket
+
+    import redis.asyncio
+    import redis.exceptions
+    from redis.asyncio.retry import Retry
+    from redis.backoff import NoBackoff
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed_port = probe.getsockname()[1]
+    client = redis.asyncio.Redis(
+        port=closed_port,
+        socket_connect_timeout=0.2,
+        retry=Retry(NoBackoff(), retries=0),
+    )
+    token = str(uuid4())
+    store = SessionStore(client)
+
+    for operation in (store.update_activity, store.delete_by_id):
+        try:
+            await operation(token)
+        except redis.exceptions.RedisError, SessionStoreError:
+            logging.getLogger(__name__).exception("Session write failed")
+        else:
+            raise AssertionError("expected the closed Redis port to fail")
+    await client.aclose()
+
+    emitted = telemetry.flush()
+
+    assert "event" in telemetry.item_types
+    assert "Session write failed" in emitted
     assert token not in emitted

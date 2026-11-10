@@ -1,8 +1,9 @@
 """Unit tests for the session-token substitution rules in config.telemetry."""
 
-from uuid import uuid4
+from typing import Any
+from uuid import UUID, uuid4
 
-from config.sentry import _in_session_token_module
+from config.sentry import _in_session_token_module, _scrub_session_tokens
 from config.telemetry import (
     redact_session_tokens,
     redact_session_tokens_text,
@@ -48,16 +49,41 @@ def test_session_fields_are_substituted_in_every_shape():
     payload = {
         "extra": {"session_id": TOKEN, "session_token": f"'{TOKEN}'"},
         "request": {"headers": {"X-Immich-User-Token": TOKEN}},
-        "data": {"http.request.header.x-immich-user-token": TOKEN},
         "environ": {"HTTP_X_IMMICH_USER_TOKEN": TOKEN},
         "scope": {"headers": [["b'x-immich-user-token'", f"b'{TOKEN}'"]]},
     }
 
-    redact_session_tokens(payload)
+    redacted = redact_session_tokens(payload)
 
-    assert TOKEN not in repr(payload)
-    assert payload["extra"]["session_id"] == REF
-    assert payload["scope"]["headers"][0] == ["b'x-immich-user-token'", REF]
+    assert TOKEN not in repr(redacted)
+    assert redacted["extra"]["session_id"] == REF
+    assert redacted["scope"]["headers"][0] == ["b'x-immich-user-token'", REF]
+
+
+def test_session_fields_holding_uuids_or_lists_are_substituted():
+    """Tokens are usually handled as `UUID`s, so that is the likeliest shape
+    for a future `extra={"session_id": ...}`."""
+    payload = {
+        "session_id": UUID(TOKEN),
+        "session_token": [TOKEN, (UUID(TOKEN),)],
+        "vars": {"session_id": f"UUID('{TOKEN}')"},
+    }
+
+    assert redact_session_tokens(payload) == {
+        "session_id": REF,
+        "session_token": [REF, [REF]],
+        "vars": {"session_id": REF},
+    }
+
+
+def test_payload_is_not_mutated():
+    """Log attributes reference the caller's own `extra` objects."""
+    extra = {"session_id": TOKEN, "keys": [f"session:{TOKEN}"]}
+
+    redacted = redact_session_tokens({"payload": extra})
+
+    assert extra == {"session_id": TOKEN, "keys": [f"session:{TOKEN}"]}
+    assert TOKEN not in repr(redacted)
 
 
 def test_token_starting_with_b_is_not_mistaken_for_a_bytes_repr():
@@ -65,9 +91,7 @@ def test_token_starting_with_b_is_not_mistaken_for_a_bytes_repr():
     token = "b" + str(uuid4())[1:]
     payload = {"session_id": token, "headers": [["x-immich-user-token", token]]}
 
-    redact_session_tokens(payload)
-
-    assert payload == {
+    assert redact_session_tokens(payload) == {
         "session_id": session_telemetry_id(token),
         "headers": [["x-immich-user-token", session_telemetry_id(token)]],
     }
@@ -85,11 +109,35 @@ def test_substitution_is_idempotent():
 
 def test_session_token_modules_match_by_package_prefix():
     assert _in_session_token_module("routers.middleware.auth_middleware")
-    assert _in_session_token_module("starlette.middleware.base")
     assert _in_session_token_module("services.session_store")
     assert not _in_session_token_module("services.session_storex")
     assert not _in_session_token_module("routers.api.assets")
     assert not _in_session_token_module(None)
+
+
+def test_frame_locals_survive_only_in_unlisted_adapter_modules():
+    """Library frames (redis-py command arguments, the ASGI scope) hold tokens
+    under names no field rule knows, so only in-app frames keep their locals."""
+
+    def frame(module: str, in_app: object) -> dict[str, Any]:
+        return {"module": module, "in_app": in_app, "vars": {"args": TOKEN}}
+
+    frames = [
+        frame("routers.api.assets", True),
+        frame("services.session_store", True),
+        frame("redis.asyncio.client", False),
+        frame("asyncio.tasks", None),
+    ]
+    event = {"exception": {"values": [{"stacktrace": {"frames": frames}}]}}
+
+    _scrub_session_tokens(event)
+
+    assert [f["vars"] == {"args": TOKEN} for f in frames] == [
+        True,
+        False,
+        False,
+        False,
+    ]
 
 
 def test_session_token_modules_exist():

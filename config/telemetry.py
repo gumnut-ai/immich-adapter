@@ -4,6 +4,7 @@ import hashlib
 import re
 from typing import Any
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
+from uuid import UUID
 
 _SENSITIVE_CDN_QUERY_KEYS = frozenset({"dl", "verify"})
 _REDACTED_QUERY_VALUE = "REDACTED"
@@ -56,15 +57,16 @@ def redact_sensitive_cdn_text(text: str) -> str:
 #   cookie;
 # - fields: `session_id` / `session_token` in a log record or local variable,
 #   and the mobile client's `x-immich-user-token` header, which the SDK's own
-#   header filter does not know, whether as a dict key (request data, span
-#   attribute, WSGI-style environ) or as an ASGI `[name, value]` header pair.
+#   header filter does not know, whether as a dict key (request data,
+#   WSGI-style environ) or as an ASGI `[name, value]` header pair. A field's
+#   value may be a string, a `UUID` or a list of either.
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 _SESSION_TOKEN_IN_TEXT = re.compile(
     rf"(session:|/sessions/|[Bb]earer\s+|immich_access_token=)({_UUID})"
 )
-# Frame locals arrive repr-quoted (`'<uuid>'`, `b'<uuid>'`); extras and log
-# attributes bare.
-_QUOTED = re.compile(r"^b?(['\"])(.*)\1$", re.DOTALL)
+# Serialized frame locals arrive as reprs (`'<uuid>'`, `b'<uuid>'`,
+# `UUID('<uuid>')`); extras and log attributes as the values themselves.
+_QUOTED = re.compile(r"^(?:b|UUID\()?(['\"])(.*)\1\)?$", re.DOTALL)
 _BARE_SESSION_TOKEN = re.compile(rf"^{_UUID}$")
 _SESSION_TOKEN_FIELDS = frozenset(
     {
@@ -72,7 +74,6 @@ _SESSION_TOKEN_FIELDS = frozenset(
         "session_token",
         "x-immich-user-token",
         "http_x_immich_user_token",
-        "http.request.header.x-immich-user-token",
     }
 )
 
@@ -104,34 +105,36 @@ def _is_session_token_field(name: object) -> bool:
     return isinstance(name, str) and _unquote(name).lower() in _SESSION_TOKEN_FIELDS
 
 
-def _redact_field_value(value: str) -> str:
-    token = _unquote(value)
-    if _BARE_SESSION_TOKEN.match(token):
-        return session_telemetry_id(token)
-    return redact_session_tokens_text(value)
+def _redact_field_value(value: Any) -> Any:
+    if isinstance(value, UUID):
+        return session_telemetry_id(value)
+    if isinstance(value, str):
+        token = _unquote(value)
+        if _BARE_SESSION_TOKEN.match(token):
+            return session_telemetry_id(token)
+        return redact_session_tokens_text(value)
+    if isinstance(value, (list, tuple)):
+        return [_redact_field_value(item) for item in value]
+    return redact_session_tokens(value)
 
 
 def redact_session_tokens(value: Any) -> Any:
-    """Replace session tokens throughout a JSON-like telemetry payload.
+    """Return a JSON-like telemetry payload with session tokens replaced.
 
-    Mutates dicts and lists in place and returns the (possibly new) value.
+    Builds new containers rather than mutating: log attributes reference the
+    caller's own `extra` objects.
     """
     if isinstance(value, str):
         return redact_session_tokens_text(value)
     if isinstance(value, dict):
-        for key, item in value.items():
-            if isinstance(item, str) and _is_session_token_field(key):
-                value[key] = _redact_field_value(item)
-            else:
-                value[key] = redact_session_tokens(item)
-    elif isinstance(value, list):
-        if (
-            len(value) == 2
-            and _is_session_token_field(value[0])
-            and isinstance(value[1], str)
-        ):
-            value[1] = _redact_field_value(value[1])
-        else:
-            for index, item in enumerate(value):
-                value[index] = redact_session_tokens(item)
+        return {
+            key: _redact_field_value(item)
+            if _is_session_token_field(key)
+            else redact_session_tokens(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        if len(value) == 2 and _is_session_token_field(value[0]):
+            return [value[0], _redact_field_value(value[1])]
+        return [redact_session_tokens(item) for item in value]
     return value

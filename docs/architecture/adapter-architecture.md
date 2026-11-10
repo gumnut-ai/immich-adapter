@@ -183,7 +183,7 @@ event values. HTTP client transaction spans likewise redact CDN query strings,
 URLs, and descriptions, and add `server.address` (and a valid
 `server.port`) for upstream correlation. Error, transaction and log hooks
 also replace session tokens with a non-reversible session telemetry id and drop
-the stack locals of session-handling modules; see
+the stack locals of library frames and session-handling modules; see
 [Logging § Session tokens](../references/logging.md#session-tokens). Never put
 JWTs, API keys, session tokens, or captured customer payloads in structured
 fields. Upstream response severity and
