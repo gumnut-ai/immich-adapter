@@ -14,7 +14,7 @@ from routers.api.auth import post_logout, validate_access_token
 from routers.api.auth import router as auth_router
 from routers.middleware.auth_middleware import AuthMiddleware
 from routers.utils.cookies import ImmichCookie
-from services.session_store import Session, SessionStore
+from services.session_store import Session, SessionStore, public_session_id
 from services.websockets import WebSocketEvent
 
 
@@ -172,8 +172,10 @@ class TestPostLogout:
     async def test_logout_emits_websocket_event(
         self, mock_request, mock_response, mock_session_store
     ):
-        """Test that logout emits on_session_delete WebSocket event."""
-        mock_request.state.session_token = "test-session-token"
+        """Logout emits on_session_delete to the session's room, carrying its
+        public id rather than its token."""
+        token = "550e8400-e29b-41d4-a716-446655440000"
+        mock_request.state.session_token = token
         mock_request.cookies = {}
 
         with patch(
@@ -189,8 +191,9 @@ class TestPostLogout:
             mock_emit.assert_called_once()
             call = mock_emit.call_args
             assert call[0][0] == WebSocketEvent.SESSION_DELETE
-            assert call[0][1] == "test-session-token"
-            assert call[0][2] == "test-session-token"
+            assert call[0][1] == token
+            assert call[0][2] == str(public_session_id(token))
+            assert call[0][2] != token
 
     @pytest.mark.anyio
     async def test_logout_websocket_error_does_not_fail_logout(
@@ -285,7 +288,7 @@ class TestValidateAccessTokenIntegration:
         store = AsyncMock(spec=SessionStore)
         now = datetime.now(UTC)
         session = Session(
-            id=self.TEST_SESSION_ID,
+            token=self.TEST_SESSION_ID,
             user_id="user_123",
             library_id="lib_456",
             stored_jwt="encrypted-placeholder",
@@ -297,7 +300,7 @@ class TestValidateAccessTokenIntegration:
             library_checked_at=now.timestamp(),
         )
         session.get_jwt = MagicMock(return_value=self.TEST_JWT)
-        store.get_by_id.return_value = session
+        store.get_by_token.return_value = session
         return store
 
     @pytest.fixture

@@ -94,7 +94,7 @@ class AssetEditReadyV2Payload(BaseModel):
     edit: list[SyncAssetEditV1]
 
 
-# Maps socket ID -> (user_id, session_id) for disconnect cleanup
+# Maps socket ID -> (user_id, public session id) for disconnect cleanup
 _sid_to_user: dict[str, tuple[str, str]] = {}
 
 
@@ -167,7 +167,7 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
     # Look up session in Redis
     try:
         session_store = await get_session_store()
-        session = await session_store.get_by_id(session_token)
+        session = await session_store.get_by_token(session_token)
     except SessionStoreError, SessionDataError:
         logger.exception(
             "WebSocket auth failed - session lookup error",
@@ -184,10 +184,9 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
 
     # Join user room and session room, and track session
     user_id = session.user_id
-    session_id = str(session.id)
     await sio.enter_room(sid, user_id)
-    await sio.enter_room(sid, _session_room(session_id))
-    _sid_to_user[sid] = (user_id, session_id)
+    await sio.enter_room(sid, _session_room(str(session.token)))
+    _sid_to_user[sid] = (user_id, str(session.id))
 
     logger.debug(
         "WebSocket authenticated",
@@ -320,7 +319,7 @@ async def emit_user_event_per_id(
 
 async def emit_session_event(
     event: WebSocketEvent,
-    session_id: str,
+    session_token: str,
     payload: EventPayload = None,
 ) -> None:
     """
@@ -336,20 +335,21 @@ async def emit_session_event(
 
     Args:
         event: The event type (from WebSocketEvent enum)
-        session_id: The session ID (session token)
-        payload: Event data - Pydantic model (auto-serialized), string, list, or None
+        session_token: The token of the session to reach, which names its room
+        payload: Event data - Pydantic model (auto-serialized), string, list, or None.
+            Never the session token; SESSION_DELETE carries the public session id.
 
     Raises:
         pydantic.ValidationError: If payload is a Pydantic model that fails serialization
     """
     try:
-        await _emit_event(event, _session_room(session_id), payload)
+        await _emit_event(event, _session_room(session_token), payload)
     except SocketIOError as ws_error:
         logger.warning(
             "Failed to emit WebSocket session event",
             extra={
                 "event": event.value,
-                "session_id": session_telemetry_id(session_id),
+                "session_id": session_telemetry_id(session_token),
                 "error": str(ws_error),
             },
             exc_info=True,

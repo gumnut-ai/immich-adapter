@@ -53,7 +53,7 @@ def test_session_rechecked_and_mutations_invalidate_even_after_failure(
     )
     session.get_jwt.return_value = "header." + payload + ".signature"
     store = AsyncMock()
-    store.get_by_id.return_value = session
+    store.get_by_token.return_value = session
     cache = ThumbnailCache(30, 100)
     settings = SimpleNamespace(
         thumbnail_metadata_cache_ttl_seconds=30,
@@ -99,11 +99,11 @@ def test_session_rechecked_and_mutations_invalidate_even_after_failure(
             == "https://cdn.example.com/old"
         )
         assert sdk.assets.retrieve.await_count == 1
-        assert store.get_by_id.await_count == 2
+        assert store.get_by_token.await_count == 2
         assert client.request(method, mutation_path, headers=headers).status_code == 500
         assert client.get(path, headers=headers).text == "https://cdn.example.com/new"
         assert sdk.assets.retrieve.await_count == 2
-        store.get_by_id.return_value = None
+        store.get_by_token.return_value = None
         assert client.get(path, headers=headers).status_code == 401
         assert sdk.assets.retrieve.await_count == 2
         lookups = [

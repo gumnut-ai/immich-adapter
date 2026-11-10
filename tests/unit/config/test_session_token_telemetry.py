@@ -138,7 +138,7 @@ async def _create_session(store: SessionStore) -> str:
         device_os="iOS 17",
         app_version="1.94.0",
     )
-    return str(session.id)
+    return str(session.token)
 
 
 @pytest.mark.anyio
@@ -148,8 +148,8 @@ async def test_session_cache_and_redis_spans_carry_no_token(telemetry, redis):
 
     with sentry_sdk.start_transaction(op="http.server", name="sync"):
         token = await _create_session(store)
-        assert await store.get_by_id(token) is not None
-        session_uuid = (await store.get_by_id(token)).id  # type: ignore[union-attr]
+        assert await store.get_by_token(token) is not None
+        session_uuid = (await store.get_by_token(token)).token  # type: ignore[union-attr]
         assert await checkpoints.set_many(
             session_uuid, 0, [(SyncEntityType.AssetV1, "cursor")]
         )
@@ -334,7 +334,7 @@ async def test_redis_failure_exception_carries_no_token(telemetry):
     token = str(uuid4())
     store = SessionStore(client)
 
-    for operation in (store.update_activity, store.delete_by_id):
+    for operation in (store.update_activity, store.delete_by_token):
         try:
             await operation(token)
         except redis.exceptions.RedisError, SessionStoreError:

@@ -1595,7 +1595,7 @@ class TestGetSyncStreamEndpoint:
         mock_checkpoint_store.get_all.return_value = []
 
         mock_session_store = AsyncMock(spec=SessionStore)
-        mock_session_store.get_by_id.return_value = None
+        mock_session_store.get_by_token.return_value = None
 
         request = SyncStreamDto(types=[])
 
@@ -1632,7 +1632,7 @@ class TestGetSyncStreamEndpoint:
         mock_session_store = AsyncMock(spec=SessionStore)
         session = create_mock_session()
         session.sync_epoch = session.client_epoch = 3
-        mock_session_store.get_by_id.return_value = session
+        mock_session_store.get_by_token.return_value = session
         init_request_scope()
         bind_library_scope(LibraryScope(library_id="lib-123", forget=AsyncMock()))
 
@@ -1669,7 +1669,7 @@ class TestGetSyncStreamEndpoint:
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
 
         mock_session_store = AsyncMock(spec=SessionStore)
-        mock_session_store.get_by_id.return_value = create_mock_session(
+        mock_session_store.get_by_token.return_value = create_mock_session(
             is_pending_sync_reset=True
         )
 
@@ -1708,7 +1708,7 @@ class TestGetSyncStreamEndpoint:
         mock_request.state.session_token = str(TEST_SESSION_UUID)
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_session_store = AsyncMock(spec=SessionStore)
-        mock_session_store.get_by_id.return_value = create_mock_session()
+        mock_session_store.get_by_token.return_value = create_mock_session()
         init_request_scope()
         if bound:
             bind_library_scope(LibraryScope(library_id=bound, forget=AsyncMock()))
@@ -1741,7 +1741,7 @@ class TestGetSyncStreamEndpoint:
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
 
         mock_session_store = AsyncMock(spec=SessionStore)
-        mock_session_store.get_by_id.return_value = create_mock_session()
+        mock_session_store.get_by_token.return_value = create_mock_session()
         init_request_scope()
         bind_library_scope(LibraryScope(library_id="lib-123", forget=AsyncMock()))
 

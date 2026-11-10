@@ -180,7 +180,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if session_token:
             try:
                 session_store = await get_session_store()
-                session = await session_store.get_by_id(session_token)
+                session = await session_store.get_by_token(session_token)
 
                 if session:
                     # Before `get_jwt()`, so a decryption failure is

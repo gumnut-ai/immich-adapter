@@ -86,7 +86,7 @@ def create_mock_session(
 ) -> Session:
     """Create a mock Session object."""
     return Session(
-        id=session_uuid,
+        token=session_uuid,
         user_id="user-123",
         library_id="lib-123",
         stored_jwt="encrypted-jwt",
@@ -109,7 +109,7 @@ def create_mock_checkpoint_store() -> AsyncMock:
 def create_mock_session_store(session: Session | None = None) -> AsyncMock:
     """Create a mock SessionStore."""
     store = AsyncMock(spec=SessionStore)
-    store.get_by_id.return_value = session
+    store.get_by_token.return_value = session
     return store
 
 

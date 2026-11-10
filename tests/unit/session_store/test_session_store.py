@@ -16,6 +16,7 @@ from services.session_store import (
     SessionExpiredError,
     SessionStore,
     SessionStoreError,
+    public_session_id,
 )
 
 # Test UUIDs for consistent testing
@@ -35,6 +36,37 @@ WRITERS = [
 ]
 
 
+class TestPublicSessionId:
+    def test_is_a_stable_uuid_distinct_from_the_token(self):
+        session_id = public_session_id(TEST_SESSION_ID)
+
+        assert session_id == public_session_id(str(TEST_SESSION_ID))
+        assert session_id != TEST_SESSION_ID
+        assert session_id != public_session_id(TEST_SESSION_ID_2)
+        assert session_id.version == 4
+
+    def test_is_unrelated_to_the_telemetry_id(self):
+        telemetry_id = session_telemetry_id(TEST_SESSION_ID)
+
+        assert telemetry_id not in public_session_id(TEST_SESSION_ID).hex
+
+    def test_session_id_is_derived_from_its_token(self):
+        session = Session(
+            token=TEST_SESSION_ID,
+            user_id="user_1",
+            library_id="",
+            stored_jwt=TEST_ENCRYPTED_JWT,
+            device_type="iOS",
+            device_os="iOS 17",
+            app_version="1.94.0",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+
+        assert session.id == public_session_id(TEST_SESSION_ID)
+        assert str(TEST_SESSION_ID) not in repr(session)
+
+
 class TestSessionDataclass:
     """Tests for the Session dataclass."""
 
@@ -42,7 +74,7 @@ class TestSessionDataclass:
         """Test Session.to_dict() converts to Redis hash format."""
         now = datetime(2025, 1, 20, 10, 0, 0, tzinfo=UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_ID,
             user_id="user_123",
             library_id="lib_456",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -72,7 +104,7 @@ class TestSessionDataclass:
         """A client behind the session's sync epoch owes a reset."""
         now = datetime.now(UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_ID,
             user_id="user_123",
             library_id="lib_456",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -106,7 +138,7 @@ class TestSessionDataclass:
 
         session = Session.from_dict(TEST_SESSION_ID, data)
 
-        assert session.id == TEST_SESSION_ID
+        assert session.token == TEST_SESSION_ID
         assert session.user_id == "user_123"
         assert session.library_id == "lib_456"
         assert session.stored_jwt == TEST_ENCRYPTED_JWT
@@ -124,7 +156,7 @@ class TestSessionDataclass:
     def test_library_revalidation_fields_round_trip(self):
         now = datetime(2025, 1, 20, 10, 0, 0, tzinfo=UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_ID,
             user_id="user_123",
             library_id="lib_456",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -199,7 +231,7 @@ class TestSessionDataclass:
         """Test get_jwt() decrypts the stored JWT."""
         now = datetime.now(UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_ID,
             user_id="user_123",
             library_id="lib_456",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -258,8 +290,8 @@ class TestSessionStoreCreate:
             assert session.device_os == "iOS 17.4"
             assert session.app_version == "1.94.0"
             assert session.is_pending_sync_reset is False
-            # Session ID should be a UUID
-            assert isinstance(session.id, UUID)
+            # The session token should be a UUID
+            assert isinstance(session.token, UUID)
 
             # Verify encrypt_jwt was called
             mock_encrypt.assert_called_once_with("test.jwt")
@@ -289,7 +321,7 @@ class TestSessionStoreCreate:
 
             mock_pipeline = mock_redis.pipeline.return_value
             expire_calls = [call[0][0] for call in mock_pipeline.expire.call_args_list]
-            assert expire_calls == [f"session:{session.id}"]
+            assert expire_calls == [f"session:{session.token}"]
 
     @pytest.mark.anyio
     async def test_create_session_with_past_expiry_raises_error(
@@ -329,7 +361,7 @@ class TestSessionStoreCreate:
             )
 
             mock_pipeline = mock_redis.pipeline.return_value
-            session_key = str(session.id)
+            session_key = str(session.token)
 
             # Verify hset was called with session data
             mock_pipeline.hset.assert_called()
@@ -346,7 +378,7 @@ class TestSessionStoreCreate:
 
 
 class TestSessionStoreGet:
-    """Tests for SessionStore.get() and get_by_id()."""
+    """Tests for SessionStore.get() and get_by_token()."""
 
     @pytest.fixture
     def mock_redis(self):
@@ -373,10 +405,10 @@ class TestSessionStoreGet:
             "is_pending_sync_reset": "0",
         }
 
-        session = await session_store.get_by_id(str(TEST_SESSION_ID))
+        session = await session_store.get_by_token(str(TEST_SESSION_ID))
 
         assert session is not None
-        assert session.id == TEST_SESSION_ID
+        assert session.token == TEST_SESSION_ID
         assert session.user_id == "user_123"
         assert session.library_id == "lib_456"
         assert session.stored_jwt == TEST_ENCRYPTED_JWT
@@ -386,12 +418,12 @@ class TestSessionStoreGet:
         """Test getting a non-existent session."""
         mock_redis.hgetall.return_value = {}
 
-        session = await session_store.get_by_id(str(TEST_SESSION_ID))
+        session = await session_store.get_by_token(str(TEST_SESSION_ID))
 
         assert session is None
 
     @pytest.mark.anyio
-    async def test_get_by_id(self, session_store, mock_redis):
+    async def test_get_by_token(self, session_store, mock_redis):
         """Test getting session by ID."""
         mock_redis.hgetall.return_value = {
             "user_id": "user_123",
@@ -405,13 +437,15 @@ class TestSessionStoreGet:
             "is_pending_sync_reset": "0",
         }
 
-        session = await session_store.get_by_id(str(TEST_SESSION_ID))
+        session = await session_store.get_by_token(str(TEST_SESSION_ID))
 
         assert session is not None
-        assert session.id == TEST_SESSION_ID
+        assert session.token == TEST_SESSION_ID
 
     @pytest.mark.anyio
-    async def test_get_by_id_invalid_uuid_returns_none(self, session_store, mock_redis):
+    async def test_get_by_token_invalid_uuid_returns_none(
+        self, session_store, mock_redis
+    ):
         """Test getting session with invalid UUID returns None."""
         mock_redis.hgetall.return_value = {
             "user_id": "user_123",
@@ -426,12 +460,12 @@ class TestSessionStoreGet:
         }
 
         # Invalid UUID string
-        session = await session_store.get_by_id("not-a-valid-uuid")
+        session = await session_store.get_by_token("not-a-valid-uuid")
 
         assert session is None
 
     @pytest.mark.anyio
-    async def test_get_by_id_redis_error_raises_session_store_error(
+    async def test_get_by_token_redis_error_raises_session_store_error(
         self, session_store, mock_redis
     ):
         """Test that Redis errors are wrapped in SessionStoreError."""
@@ -440,7 +474,7 @@ class TestSessionStoreGet:
         )
 
         with pytest.raises(SessionStoreError) as exc_info:
-            await session_store.get_by_id(str(TEST_SESSION_ID))
+            await session_store.get_by_token(str(TEST_SESSION_ID))
 
         assert "Failed to retrieve session" in str(exc_info.value)
         assert isinstance(exc_info.value.__cause__, redis.exceptions.ConnectionError)
@@ -564,7 +598,7 @@ class TestSessionStoreGetByUser:
 
 
 class TestSessionStoreDelete:
-    """Tests for SessionStore.delete() and delete_by_id()."""
+    """Tests for SessionStore.delete() and delete_by_token()."""
 
     @pytest.fixture
     def mock_redis(self):
@@ -730,7 +764,7 @@ def _full_session_data() -> dict[str, str]:
     """Build a complete session hash as SessionStore.create would write it."""
     now = datetime.now(UTC)
     return Session(
-        id=TEST_SESSION_ID,
+        token=TEST_SESSION_ID,
         user_id="user_123",
         library_id="lib_456",
         stored_jwt=TEST_ENCRYPTED_JWT,

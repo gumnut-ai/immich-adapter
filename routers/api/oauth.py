@@ -266,7 +266,7 @@ async def finish_oauth(
             app_version=device_info.app_version,
         )
         # Use session token (UUID) as the access token for clients
-        session_token = str(session.id)
+        session_token = str(session.token)
 
         # Set authentication cookies with session token
         secure = request.url.scheme == "https"

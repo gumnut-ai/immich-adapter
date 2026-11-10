@@ -82,7 +82,7 @@ def _get_session_token(request: Request) -> UUID:
 
 async def _current_epoch(session_store: SessionStore, session_token: str) -> int:
     """The session's sync epoch; checkpoints are read and written under it."""
-    session = await session_store.get_by_id(session_token)
+    session = await session_store.get_by_token(session_token)
     return session.sync_epoch if session else 0
 
 
@@ -365,7 +365,7 @@ async def get_sync_stream(
     # (matches immich behavior).
     epoch = 0
     if session_uuid:
-        session = await session_store.get_by_id(str(session_uuid))
+        session = await session_store.get_by_token(str(session_uuid))
         if session:
             epoch = session.sync_epoch
             bind_sync_epoch(epoch)

@@ -36,7 +36,7 @@ def checkpoints(redis):
 async def _put_session(redis, library_id: str = "lib_a", **fields: str) -> None:
     now = datetime.now(UTC)
     data = Session(
-        id=TOKEN,
+        token=TOKEN,
         user_id="user_1",
         library_id=library_id,
         stored_jwt="enc",
@@ -50,7 +50,7 @@ async def _put_session(redis, library_id: str = "lib_a", **fields: str) -> None:
 
 
 async def _session(sessions: SessionStore) -> Session:
-    session = await sessions.get_by_id(str(TOKEN))
+    session = await sessions.get_by_token(str(TOKEN))
     assert session is not None
     return session
 
@@ -273,6 +273,6 @@ async def test_delete_removes_the_current_epoch_checkpoints(
     await _put_session(redis, "lib_b", sync_epoch="2", client_epoch="2")
     assert await _ack(checkpoints, 2, "b1")
 
-    assert await sessions.delete_by_id(str(TOKEN))
+    assert await sessions.delete_by_token(str(TOKEN))
 
     assert not await redis.exists(checkpoint_key(TOKEN, 2))

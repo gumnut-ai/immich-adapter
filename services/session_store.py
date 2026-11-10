@@ -1,3 +1,5 @@
+import dataclasses
+import hashlib
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -113,11 +115,32 @@ _REQUIRED_SESSION_FIELDS = frozenset(
 )
 
 
+# Domain-separates the public session id from other digests of the token,
+# such as its telemetry id.
+_SESSION_ID_DIGEST_PREFIX = b"immich-adapter:session-id:"
+
+
+def public_session_id(session_token: object) -> UUID:
+    """The id a session is listed, updated and deleted by.
+
+    Unlike the token, it is not a credential. It is derived from the token, not
+    stored, so every session has one, including those created before it
+    existed. A token is a random UUID4, so the id cannot be reversed into one.
+    Formatted as a UUID because Immich's `SessionResponseDto.id` is one.
+    """
+    digest = hashlib.sha256(
+        _SESSION_ID_DIGEST_PREFIX + str(session_token).encode()
+    ).digest()
+    return UUID(bytes=digest[:16], version=4)
+
+
 @dataclass
 class Session:
     """Session data stored in Redis."""
 
-    id: UUID  # The session token (what client sends as accessToken)
+    # The bearer credential: the login response's accessToken and the Redis
+    # key. Never returned in any other response; `id` is the public handle.
+    token: UUID = dataclasses.field(repr=False)
     user_id: str  # Gumnut user ID (UUID format)
     library_id: str  # Resolved Gumnut library, or "" until the first scoped request
     stored_jwt: str  # Encrypted Gumnut JWT
@@ -136,6 +159,11 @@ class Session:
     library_checked_at: float = 0.0
     # Whether library_id is the user's stored choice rather than the fallback.
     library_from_choice: bool = False
+
+    @property
+    def id(self) -> UUID:
+        """Public session id; see `public_session_id`."""
+        return public_session_id(self.token)
 
     @property
     def is_pending_sync_reset(self) -> bool:
@@ -160,12 +188,12 @@ class Session:
         }
 
     @classmethod
-    def from_dict(cls, session_id: UUID, data: dict[str, str]) -> Session:
+    def from_dict(cls, session_token: UUID, data: dict[str, str]) -> Session:
         """
         Create from Redis hash data.
 
         Args:
-            session_id: The session UUID
+            session_token: The session token the hash is keyed by
             data: Redis hash data containing session fields
 
         Returns:
@@ -177,7 +205,7 @@ class Session:
         missing_fields = _REQUIRED_SESSION_FIELDS - set(data.keys())
         if missing_fields:
             raise SessionDataError(
-                f"Session {session_telemetry_id(session_id)} is missing required "
+                f"Session {session_telemetry_id(session_token)} is missing required "
                 f"fields: {missing_fields}"
             )
 
@@ -190,7 +218,7 @@ class Session:
                 pending = data.get("is_pending_sync_reset") == "1"
                 client_epoch = -1 if pending else 0
             return cls(
-                id=session_id,
+                token=session_token,
                 user_id=data["user_id"],
                 library_id=data["library_id"],
                 stored_jwt=data["stored_jwt"],
@@ -206,7 +234,7 @@ class Session:
             )
         except ValueError as e:
             raise SessionDataError(
-                f"Session {session_telemetry_id(session_id)} has malformed data: {e}"
+                f"Session {session_telemetry_id(session_token)} has malformed data: {e}"
             ) from e
 
     def get_jwt(self) -> str:
@@ -272,13 +300,14 @@ class SessionStore:
             expires_at: Optional expiration time (uses Redis TTL)
 
         Returns:
-            The created Session object (session.id is the token to return to client)
+            The created Session object (session.token is the token to return to
+            the client)
 
         Raises:
             SessionExpiredError: If expires_at is in the past
             JWTEncryptionError: If JWT encryption fails
         """
-        session_id = uuid4()
+        session_token = uuid4()
         now = datetime.now(UTC)
 
         if expires_at is not None and expires_at <= now:
@@ -290,7 +319,7 @@ class SessionStore:
         encrypted_jwt = encrypt_jwt(jwt_token)
 
         session = Session(
-            id=session_id,
+            token=session_token,
             user_id=user_id,
             library_id=library_id,
             stored_jwt=encrypted_jwt,
@@ -301,7 +330,7 @@ class SessionStore:
             updated_at=now,
         )
 
-        session_key = str(session_id)
+        session_key = str(session_token)
         session_data = session.to_dict()
         cache_key = f"session:{session_key}"
 
@@ -325,7 +354,7 @@ class SessionStore:
             self._set_network_data(span)
         return session
 
-    async def get_by_id(self, session_token: str) -> Session | None:
+    async def get_by_token(self, session_token: str) -> Session | None:
         """
         Get session by session token.
 
@@ -406,6 +435,16 @@ class SessionStore:
             await self._cleanup_orphaned_indexes(user_id, orphaned_tokens)
 
         return sessions
+
+    async def get_user_session(self, user_id: str, session_id: UUID) -> Session | None:
+        """Get one of the user's sessions by its public id, not its token.
+
+        Searches only that user's sessions, so another user's id is not found.
+        """
+        for session in await self.get_by_user(user_id):
+            if session.id == session_id and session.user_id == user_id:
+                return session
+        return None
 
     async def _cleanup_orphaned_indexes(
         self, user_id: str, session_tokens: list[str]
@@ -544,7 +583,7 @@ class SessionStore:
                     checkpoint_key(session_token, 0),
                 )
             )
-        session = await self.get_by_id(session_token)
+        session = await self.get_by_token(session_token)
         if session is None:
             return False
         # Not atomic with the read: if the epoch advances meanwhile, the stale
@@ -583,9 +622,9 @@ class SessionStore:
         Returns:
             True if session existed and was deleted, False otherwise
         """
-        return await self.delete_by_id(session_token)
+        return await self.delete_by_token(session_token)
 
-    async def delete_by_id(self, session_token: str) -> bool:
+    async def delete_by_token(self, session_token: str) -> bool:
         """
         Delete a session by token.
 
@@ -597,7 +636,7 @@ class SessionStore:
         Returns:
             True if session existed and was deleted, False otherwise
         """
-        session = await self.get_by_id(session_token)
+        session = await self.get_by_token(session_token)
         if not session:
             return False
 

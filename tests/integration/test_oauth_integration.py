@@ -33,7 +33,7 @@ def mock_session_store():
     store = AsyncMock(spec=SessionStore)
     now = datetime.now(UTC)
     mock_session = Session(
-        id=TEST_SESSION_UUID,
+        token=TEST_SESSION_UUID,
         user_id=str(TEST_USER_UUID),
         library_id="",
         stored_jwt="encrypted-jwt",
