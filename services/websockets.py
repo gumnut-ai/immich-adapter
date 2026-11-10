@@ -353,14 +353,41 @@ async def emit_session_event(
         )
 
 
-async def emit_session_delete(session_token: str) -> None:
-    """Tell a session's clients it was deleted (``on_session_delete``).
+async def close_session_sockets(session_token: str) -> None:
+    """End a deleted session's Socket.IO connections.
 
-    The payload is the session's public id, as in upstream Immich, never its
-    token. Best-effort, like ``emit_session_event``.
+    Emits ``on_session_delete`` to the session's room, then disconnects every
+    socket in it. The payload is the session's public id, as in upstream
+    Immich, never its token. The event goes first so the web client can run
+    its logout navigation before the disconnect arrives.
+
+    Disconnecting removes a socket from all of its rooms, including the user
+    room, so a deleted session stops receiving the user's events even when its
+    client ignores ``on_session_delete``. Leaving only the session room would
+    not do that. A server-initiated disconnect is not retried by the Immich
+    clients, and a reconnect with the deleted token is rejected by ``connect``.
+
+    Only sockets connected to this process are reached: the server uses the
+    default in-memory client manager.
+
+    Best-effort, like ``emit_session_event``: a failed disconnect is logged
+    and the remaining sockets are still disconnected, since the session is
+    already deleted and logout or session deletion must not fail here.
     """
     await emit_session_event(
         WebSocketEvent.SESSION_DELETE,
         session_token,
         str(public_session_id(session_token)),
     )
+    room = _session_room(session_token)
+    # Copy first: each disconnect removes its sid from the room being read.
+    sids = [sid for sid, _ in sio.manager.get_participants("/", room)]
+    for sid in sids:
+        try:
+            await sio.disconnect(sid)
+        except Exception:
+            logger.warning(
+                "Failed to disconnect a deleted session's socket",
+                extra={"sid": sid, "session_id": session_telemetry_id(session_token)},
+                exc_info=True,
+            )

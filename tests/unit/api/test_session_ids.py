@@ -154,7 +154,7 @@ async def test_revoking_other_sessions_keeps_the_callers_session(client, store):
     mine = await _login(store)
     other = await _login(store)
 
-    with patch("routers.api.sessions.emit_session_delete", new_callable=AsyncMock):
+    with patch("routers.api.sessions.close_session_sockets", new_callable=AsyncMock):
         response = await client.delete("/api/sessions", headers=_bearer(mine))
 
     assert response.status_code == 204

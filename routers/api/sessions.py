@@ -11,7 +11,7 @@ from routers.immich_models import (
 )
 from routers.utils.current_user import get_current_user_id
 from services.session_store import Session, SessionStore, get_session_store
-from services.websockets import emit_session_delete
+from services.websockets import close_session_sockets
 
 logger = logging.getLogger(__name__)
 
@@ -117,12 +117,12 @@ async def delete_all_sessions(
         if session_token != current_session_token:
             try:
                 await session_store.delete_by_token(session_token)
-                # Emit WebSocket event to notify the deleted session's client
+                # Notify and disconnect the deleted session's sockets
                 try:
-                    await emit_session_delete(session_token)
+                    await close_session_sockets(session_token)
                 except Exception as ws_error:
                     logger.warning(
-                        "Failed to emit WebSocket event after session delete",
+                        "Failed to close sockets after session delete",
                         extra={
                             "session_id": session_telemetry_id(session_token),
                             "error": str(ws_error),
@@ -197,7 +197,7 @@ async def delete_session(
 
     await session_store.delete_by_token(session_token)
 
-    await emit_session_delete(session_token)
+    await close_session_sockets(session_token)
 
 
 @router.post("/{id}/lock", status_code=204)

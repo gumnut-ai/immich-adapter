@@ -16,7 +16,7 @@ from services.websockets import (
     _sid_to_user,
     connect,
     disconnect,
-    emit_session_delete,
+    close_session_sockets,
     emit_session_event,
     emit_user_event,
     sio,
@@ -520,7 +520,7 @@ class TestEmitSessionEvent:
     async def test_session_delete_reaches_the_session_room_with_its_public_id(
         self, mock_sio_emit
     ):
-        await emit_session_delete(str(TEST_SESSION_ID))
+        await close_session_sockets(str(TEST_SESSION_ID))
 
         mock_sio_emit.assert_called_once_with(
             "on_session_delete",
