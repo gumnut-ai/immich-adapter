@@ -1,6 +1,6 @@
 ---
 title: "Media Variant Selection"
-last-updated: 2026-10-15
+last-updated: 2026-11-09
 ---
 
 # Media Variant Selection
@@ -78,6 +78,13 @@ evicts only the failed selection and its known aliases; unrelated entries and
 independently refreshed selections stay warm. An actual cache hit retries
 metadata once through the live API. Upstream metadata failures and failures
 on a fresh CDN lookup are not retried by this cache.
+
+## Video playback selection
+
+`GET /api/assets/{id}/video/playback` streams the asset's `original` rung only
+when that rung's MIME type is `video/*`; any other asset returns 404, matching
+upstream Immich's video-only playback route. Originals of other types are
+served by `GET /api/assets/{id}/original`.
 
 ## Video playback metadata cache
 
