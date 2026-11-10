@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import sentry_sdk
 from sentry_sdk.types import Event, Hint
-from sentry_sdk.utils import iter_event_frames
+from sentry_sdk.utils import format_attribute, iter_event_frames
 
 from config.settings import get_settings
 from config.telemetry import (
@@ -93,6 +93,14 @@ def _before_send_log(log: Any, _hint: Hint) -> Any:
     body and attributes. A message that formats an `httpx.HTTPStatusError`
     quotes the full signed request URL."""
     try:
+        attributes = log.get("attributes")
+        if isinstance(attributes, dict):
+            # The logging integration passes `extra=` values through as
+            # objects, which the SDK reprs only after this hook. Repr them now,
+            # as the SDK would, so their strings are redacted too.
+            log["attributes"] = {
+                key: format_attribute(value) for key, value in attributes.items()
+            }
         return redact_session_tokens(redact_sensitive_cdn_values(log))
     except Exception:
         return None

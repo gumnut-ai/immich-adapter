@@ -2,8 +2,9 @@
 
 Sentry is initialized from the production options (traces sampled at 100%)
 with a capturing transport. A fetch of a synthetic signed URL fails, and the
-failure is logged and captured, so the URL reaches a transaction span, a log,
-a breadcrumb, the exception message and frame locals.
+failure is logged and captured, so the URL reaches a transaction span, a log
+message and an object-valued log attribute, a breadcrumb, the exception message
+and frame locals.
 """
 
 import logging
@@ -66,7 +67,9 @@ async def test_failed_signed_fetch_sends_no_credential(transport):
         try:
             await _fetch(SIGNED_URL)
         except httpx.HTTPStatusError as exc:
-            logger.warning("CDN fetch failed: %s", exc)
+            logger.warning(
+                "CDN fetch failed: %s", exc, extra={"cdn_url": exc.request.url}
+            )
             sentry_sdk.capture_exception(exc)
     sentry_sdk.flush()
 
@@ -81,7 +84,13 @@ async def test_failed_signed_fetch_sends_no_credential(transport):
     assert sorted(payloads) == ["event", "log", "transaction"]
     assert TOKEN not in emitted
     assert "family-photo.jpg" not in emitted
-    ((log,),) = [payload["items"] for payload in payloads["log"]]
+    (log,) = [
+        log
+        for payload in payloads["log"]
+        for log in payload["items"]
+        if log["body"].startswith("CDN fetch failed")
+    ]
     assert "w=720&verify=REDACTED&dl=REDACTED" in log["body"]
+    assert "w=720&verify=REDACTED&dl=REDACTED" in log["attributes"]["cdn_url"]["value"]
     (event,) = payloads["event"]
     assert "verify=REDACTED" in event["exception"]["values"][0]["value"]
