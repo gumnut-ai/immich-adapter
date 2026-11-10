@@ -1,6 +1,13 @@
+import re
+from unittest.mock import patch
+
 import pytest
 
-from routers.utils.oauth_utils import extract_authorization_state, parse_callback_url
+from routers.utils.oauth_utils import (
+    extract_authorization_state,
+    generate_pkce_pair,
+    parse_callback_url,
+)
 
 
 class TestParseCallbackUrl:
@@ -150,3 +157,25 @@ class TestExtractAuthorizationState:
     def test_missing_or_empty_state_raises(self, url):
         with pytest.raises(ValueError):
             extract_authorization_state(url)
+
+
+class TestGeneratePkcePair:
+    def test_challenge_is_the_rfc_7636_s256_of_the_verifier(self):
+        # RFC 7636 Appendix B.
+        rfc_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        with patch(
+            "routers.utils.oauth_utils.secrets.token_urlsafe",
+            return_value=rfc_verifier,
+        ):
+            verifier, challenge = generate_pkce_pair()
+
+        assert verifier == rfc_verifier
+        assert challenge == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+    def test_verifier_is_fresh_and_within_rfc_7636_bounds(self):
+        verifier, _ = generate_pkce_pair()
+        other, _ = generate_pkce_pair()
+
+        assert 43 <= len(verifier) <= 128
+        assert re.fullmatch(r"[A-Za-z0-9\-._~]+", verifier)
+        assert verifier != other

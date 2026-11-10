@@ -28,8 +28,16 @@ from routers.utils.cookies import (
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
-from routers.utils.oauth_utils import extract_authorization_state, parse_callback_url
-from services.oauth_sign_in_store import OAuthSignInStore, get_oauth_sign_in_store
+from routers.utils.oauth_utils import (
+    extract_authorization_state,
+    generate_pkce_pair,
+    parse_callback_url,
+)
+from services.oauth_sign_in_store import (
+    OAuthSignIn,
+    OAuthSignInStore,
+    get_oauth_sign_in_store,
+)
 from services.session_store import SessionStore, get_session_store
 from utils.jwt_encryption import JWTEncryptionError
 from utils.user_agent import extract_device_info
@@ -101,7 +109,12 @@ async def start_oauth(
     the complete authorization URL.
 
     Records who started the sign-in so only that client can finish it; see
-    ``_callback_is_bound``.
+    ``_find_sign_in``.
+
+    A client that sends no PKCE challenge (Immich web) gets one generated
+    here, whose verifier stays on the sign-in's records for the callback to
+    present: the authorization code is then useless without it. A client
+    that sends its own (Immich mobile) presents its own verifier.
 
     Args:
         oauth_config: Configuration containing redirect URI and optional PKCE parameters
@@ -114,18 +127,22 @@ async def start_oauth(
     """
     try:
         redirectUri = rewrite_redirect_uri(oauth_config.redirectUri, request)
+        code_challenge = oauth_config.codeChallenge
+        code_verifier = None
+        if not code_challenge:
+            code_verifier, code_challenge = generate_pkce_pair()
         result = await client.oauth.auth_url(
             redirect_uri=redirectUri,
-            code_challenge=oauth_config.codeChallenge,
-            code_challenge_method="S256" if oauth_config.codeChallenge else None,
+            code_challenge=code_challenge,
+            code_challenge_method="S256",
             extra_headers={"Authorization": omit},  # Omit auth for this request
         )
 
         server_state = extract_authorization_state(result.url)
         browser_secret = secrets.token_urlsafe(32)
-        await sign_in_store.bind(server_state, browser_secret)
+        await sign_in_store.bind(server_state, browser_secret, code_verifier)
         if oauth_config.state:
-            await sign_in_store.bind(server_state, oauth_config.state)
+            await sign_in_store.bind(server_state, oauth_config.state, code_verifier)
         set_oauth_sign_in_cookie(
             response, browser_secret, secure=request.url.scheme == "https"
         )
@@ -143,13 +160,13 @@ async def start_oauth(
         )
 
 
-async def _callback_is_bound(
+async def _find_sign_in(
     request: Request,
     oauth_callback: OAuthCallbackDto,
     server_state: str | None,
     sign_in_store: OAuthSignInStore,
-) -> bool:
-    """Return whether this callback comes from the client that started sign-in.
+) -> OAuthSignIn | None:
+    """Return the sign-in this callback's client started, or None.
 
     The callback URL's ``state`` alone proves nothing: whoever holds the URL
     has it. The caller must also present a secret recorded for that state at
@@ -160,14 +177,14 @@ async def _callback_is_bound(
     state, so the adapter checks the pairing it recorded instead.
     """
     if not server_state:
-        return False
+        return None
     for secret in (
         request.cookies.get(ImmichCookie.OAUTH_SIGN_IN.value),
         oauth_callback.state,
     ):
-        if secret and await sign_in_store.is_bound(server_state, secret):
-            return True
-    return False
+        if secret and (sign_in := await sign_in_store.find(server_state, secret)):
+            return sign_in
+    return None
 
 
 @router.post("/callback", status_code=201)
@@ -188,7 +205,7 @@ async def finish_oauth(
     cookies with the session token, and returns the login response.
 
     The callback must come from the client that started sign-in (see
-    ``_callback_is_bound``); otherwise it is rejected with 400 before the
+    ``_find_sign_in``); otherwise it is rejected with 400 before the
     code is exchanged, which leaves the sign-in open for that client.
 
     The session token (UUID) is returned as the accessToken.
@@ -214,9 +231,10 @@ async def finish_oauth(
             status_code=400, detail="OAuth authentication failed. Please try again."
         )
 
-    if not await _callback_is_bound(
+    sign_in = await _find_sign_in(
         request, oauth_callback, parsed["state"], sign_in_store
-    ):
+    )
+    if sign_in is None:
         logger.warning(
             "OAuth callback not bound to the client that started sign-in",
             extra={
@@ -244,7 +262,7 @@ async def finish_oauth(
             code=parsed["code"],
             state=parsed["state"],
             error=parsed["error"],
-            code_verifier=oauth_callback.codeVerifier,
+            code_verifier=sign_in.code_verifier or oauth_callback.codeVerifier,
             extra_headers={"Authorization": omit},  # Omit auth for this request
         )
 

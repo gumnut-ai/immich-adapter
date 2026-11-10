@@ -12,7 +12,7 @@ from routers.api.oauth import finish_oauth, rewrite_redirect_uri
 from routers.immich_models import OAuthCallbackDto
 from routers.utils.cookies import ImmichCookie
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_id
-from services.oauth_sign_in_store import OAuthSignInStore
+from services.oauth_sign_in_store import OAuthSignIn, OAuthSignInStore
 from services.session_store import SessionStore
 from tests.conftest import make_sdk_status_error
 
@@ -164,7 +164,9 @@ class TestFinishOAuth:
     def mock_sign_in_store(self):
         """A store in which only the browser's sign-in cookie is recorded."""
         store = AsyncMock(spec=OAuthSignInStore)
-        store.is_bound.side_effect = lambda state, secret: secret == "browser-secret"
+        store.find.side_effect = lambda state, secret: (
+            OAuthSignIn(code_verifier=None) if secret == "browser-secret" else None
+        )
         return store
 
     @pytest.fixture

@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import secrets
 from urllib.parse import parse_qs, urlparse
 
 
@@ -55,3 +58,14 @@ def extract_authorization_state(authorization_url: str) -> str:
     if not state:
         raise ValueError("Authorization URL has no 'state' parameter")
     return state
+
+
+def generate_pkce_pair() -> tuple[str, str]:
+    """Return a new PKCE code verifier and its S256 code challenge (RFC 7636).
+
+    The verifier is 64 URL-safe characters, within RFC 7636's 43 to 128.
+    """
+    verifier = secrets.token_urlsafe(48)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
