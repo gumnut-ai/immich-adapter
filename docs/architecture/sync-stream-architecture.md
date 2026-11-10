@@ -1,14 +1,15 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-10-16
+last-updated: 2026-11-10
 ---
 
 # Sync Stream Architecture
 
 The sync stream consumes events from the Gumnut API and converts them to
 Immich sync format. `routers/api/sync/stream.py` is its entry point and owns
-the current sync-type order, event classification and tunables; this page owns
-the contracts they implement.
+event classification, orchestration and stream tunables.
+`routers/api/sync/type_order.py` owns the shared request-to-entity mapping and
+upsert dependency order; this page owns the contracts they implement.
 
 ## Two-Phase Ordering
 
@@ -262,9 +263,10 @@ the new one. A half-wired version streams without error but loses a guarantee:
   face person_id and album cover handling above — must match the new type too.
   The v3 client streams such an entity only as the newer version, so a version
   left off silently loses that FK-safety guarantee.
-- **FK checkpoint lookups** (`fk_integrity.py`). A checkpoint under either
-  version counts as "synced in a prior cycle"; otherwise a client checkpointed
-  under the new type logs spurious FK warnings.
+- **FK checkpoint lookups** (`fk_integrity.py`). The lookup types are derived
+  from the shared request-to-entity order, so every ordered version is
+  recognized automatically. A checkpoint under either version counts as
+  "synced in a prior cycle."
 - **Conversion** (`converters.py`, dispatched from `events.py`). Each version
   has its own converter, selected by the sync entity type.
 

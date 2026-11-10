@@ -45,6 +45,7 @@ from routers.api.sync.fk_integrity import (
     null_deleted_fk_references,
     payload_override,
 )
+from routers.api.sync.type_order import SYNC_TYPE_ORDER
 from routers.immich_models import (
     SyncAssetDeleteV1,
     SyncAssetFaceDeleteV1,
@@ -122,32 +123,6 @@ _DELETE_EVENT_TYPES = frozenset(
 # _stream_entity_type for future skip rules.
 _SKIPPED_EVENT_TYPES: frozenset[str] = frozenset()
 
-# Mapping from SyncRequestType to (gumnut_entity_type, SyncEntityType)
-# Order matters - assets before metadata, albums before album_assets, etc.
-# This ordering ensures FK parents are streamed before children during upserts.
-_SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
-    # Stacks stream before assets: the mobile timeline hides an asset whose
-    # stackId names a stack row the client doesn't have, so the stack must land
-    # before the member asset pointing at it. (The client enforces no FK
-    # constraint either way — this is about visibility, not insert order.)
-    (SyncRequestType.StacksV1, "stack", SyncEntityType.StackV1),
-    (SyncRequestType.AssetsV1, "asset", SyncEntityType.AssetV1),
-    (SyncRequestType.AssetsV2, "asset", SyncEntityType.AssetV2),
-    (SyncRequestType.AlbumsV1, "album", SyncEntityType.AlbumV1),
-    (SyncRequestType.AlbumsV2, "album", SyncEntityType.AlbumV2),
-    # AlbumUsersV1 is a second sync entity derived from the same "album" events:
-    # the owner album-user link. It must stream after the album itself (FK
-    # parent) and after the owner UserV1 (streamed before phase 1). The v3
-    # client's album-list query inner-joins on an owner-role album-user row, so
-    # without this the album never displays. See _DERIVED_UPSERT_ONLY_TYPES.
-    (SyncRequestType.AlbumUsersV1, "album", SyncEntityType.AlbumUserV1),
-    (SyncRequestType.AlbumToAssetsV1, "album_asset", SyncEntityType.AlbumToAssetV1),
-    (SyncRequestType.AssetExifsV1, "metadata", SyncEntityType.AssetExifV1),
-    (SyncRequestType.PeopleV1, "person", SyncEntityType.PersonV1),
-    (SyncRequestType.AssetFacesV1, "face", SyncEntityType.AssetFaceV1),
-    (SyncRequestType.AssetFacesV2, "face", SyncEntityType.AssetFaceV2),
-]
-
 # When a client requests a V2 request type, skip its V1 counterpart: both map to
 # the same Gumnut entity type, so streaming both would duplicate every event. The
 # mobile client version-gates V1-vs-V2 and sends only one, but a non-standard
@@ -187,7 +162,7 @@ _SKIPPED_REPEATS_PER_ACK = 5000
 # Order for streaming delete events — reverse of FK dependency order.
 # Children are deleted before parents so the client can clean up FK references
 # before the referenced entity is removed. This is the inverse of
-# _SYNC_TYPE_ORDER's upsert ordering.
+# SYNC_TYPE_ORDER's upsert ordering.
 _DELETE_TYPE_ORDER: list[SyncEntityType] = [
     SyncEntityType.AssetFaceDeleteV1,
     SyncEntityType.AlbumToAssetDeleteV1,
@@ -218,7 +193,7 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
 #                          EXIF arrives via AssetExifsV1.
 #   - MemoriesV1 /
 #     MemoryToAssetsV1:    Gumnut has no memories feature; the tab renders empty.
-# StacksV1 is event-driven via _SYNC_TYPE_ORDER; PartnerStacksV1 remains a no-op.
+# StacksV1 is event-driven via SYNC_TYPE_ORDER; PartnerStacksV1 remains a no-op.
 # UserMetadataV1 is deliberately NOT here — it is emitted (a synthesized
 # preferences row); see gumnut_user_to_sync_user_metadata_v1.
 _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
@@ -235,9 +210,9 @@ _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
     SyncRequestType.MemoryToAssetsV1: SyncEntityType.MemoryToAssetV1,
 }
 
-# User types below are handled outside _SYNC_TYPE_ORDER.
+# User types below are handled outside SYNC_TYPE_ORDER.
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
-    {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
+    {request_type for request_type, _, _ in SYNC_TYPE_ORDER}
     | {
         SyncRequestType.AuthUsersV1,
         SyncRequestType.UsersV1,
@@ -968,7 +943,7 @@ async def generate_sync_stream(
         # buffering delete events for phase 2.
         delete_buffer: list[tuple[str, SyncEntityType]] = []
 
-        for request_type, gumnut_entity_type, sync_entity_type in _SYNC_TYPE_ORDER:
+        for request_type, gumnut_entity_type, sync_entity_type in SYNC_TYPE_ORDER:
             if request_type not in requested_types:
                 continue
 
