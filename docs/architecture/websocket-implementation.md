@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation"
-last-updated: 2026-11-10
+last-updated: 2026-11-11
 ---
 
 # WebSocket Implementation
@@ -20,7 +20,7 @@ session room: one adapter session, all sockets for that session
 
 User-scoped events update every connected device owned by the user. Session-scoped events target one login, which lets session revocation reach only the affected client's sockets (see [Session revocation](#session-revocation)). python-socketio logs room names at INFO, so the session room is named `session:<telemetry id>` (`config/telemetry.py::session_telemetry_id`) rather than the session's bearer token.
 
-The service retains a socket-ID-to-room mapping for disconnect cleanup and observability. It runs in the application's asyncio event loop; room membership and emission are delegated to python-socketio.
+`services/websockets.py` keeps a socket-ID-to-user-ID map so the disconnect handler can include the user ID in its log. python-socketio owns room membership and removes disconnected sockets from their rooms. The service runs in the application's asyncio event loop.
 
 The WebSocket transport underneath Socket.IO is selected by Uvicorn. See [Uvicorn Runtime Settings](../references/uvicorn-settings.md) for the protocol choice and deployment owners.
 
