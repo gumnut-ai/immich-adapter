@@ -445,3 +445,65 @@ class TestStreamingUploadPipeline:
 
         # 401 from the Gumnut API is an internal auth issue, not the client's
         assert exc_info.value.status_code == 502
+
+
+class TestPostUploadDrain:
+    @staticmethod
+    def _request(endless: bool) -> tuple[MagicMock, dict[str, bool]]:
+        """A request whose body is a complete upload followed by epilogue bytes.
+
+        With ``endless`` the epilogue keeps arriving until the reader stops;
+        otherwise a few chunks follow at once and the body ends. The returned
+        state records whether the body was read to its end.
+        """
+        body, ct_header = _build_multipart_body()
+        request = MagicMock()
+        request.headers = {"content-type": ct_header}
+        state = {"fully_read": False}
+
+        async def stream():
+            yield body
+            if endless:
+                while True:
+                    await asyncio.sleep(0.01)
+                    yield b"x" * 64
+            for _ in range(5):
+                yield b"x" * 64
+            state["fully_read"] = True
+
+        request.stream = stream
+        return request, state
+
+    async def _execute(self, request: MagicMock) -> dict:
+        mock_client = MagicMock()
+        mock_client.post.return_value = _make_httpx_response(201)
+        with (
+            patch(
+                "services.streaming_upload._get_streaming_http_client",
+                return_value=mock_client,
+            ),
+            patch("services.streaming_upload.POST_UPLOAD_DRAIN_TIMEOUT_SECONDS", 0.5),
+        ):
+            pipeline = StreamingUploadPipeline(
+                request, "http://localhost:8000", "jwt", None
+            )
+            # Guard so a drain with no deadline fails instead of hanging.
+            return await asyncio.wait_for(pipeline.execute(_extract_fields), 10)
+
+    @pytest.mark.anyio
+    async def test_reads_body_that_ends_within_deadline(self):
+        request, state = self._request(endless=False)
+
+        result = await self._execute(request)
+
+        assert result["id"] == "asset_abc123"
+        assert state["fully_read"]
+
+    @pytest.mark.anyio
+    async def test_stops_reading_body_that_outlasts_deadline(self):
+        request, state = self._request(endless=True)
+
+        result = await self._execute(request)
+
+        assert result["id"] == "asset_abc123"
+        assert not state["fully_read"]

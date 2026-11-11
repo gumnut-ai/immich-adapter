@@ -26,6 +26,7 @@ from gumnut.types.asset_bulk_update_assets_params import Update, UpdateChange
 from gumnut.types.asset_response import AssetResponse
 from pydantic import ValidationError
 from starlette.requests import ClientDisconnect
+from starlette.types import Message
 
 from config.settings import Settings, get_settings
 from routers.api.constants import (
@@ -114,6 +115,7 @@ from services.asset_edit_renderer import (
     EditRenderLimitError,
     render_asset_edit,
 )
+from services.streaming_form_parser import MAX_FIELD_BYTES, MAX_FORM_FIELDS
 from services.streaming_upload import StreamingUploadPipeline
 from services.thumbnail_cache import (
     CacheBypassReason,
@@ -642,8 +644,11 @@ async def upload_asset(
                 settings.gumnut_api_base_url,
                 library_id,
             )
-        else:
-            return await _upload_buffered(request, client, current_user, library_id)
+        if content_length is None:
+            # The threshold bounds a buffered body with a Content-Length; one
+            # without (immich-go sends chunked bodies) needs its own bound.
+            request = _limit_body(request, _UPLOAD_WITHOUT_LENGTH_MAX_BYTES)
+        return await _upload_buffered(request, client, current_user, library_id)
     except ClientDisconnect:
         # The client hung up before finishing the upload (mobile backgrounding,
         # cancel, network blip). The connection is gone, so there's no one to
@@ -660,6 +665,43 @@ async def upload_asset(
         )
 
 
+_GIB = 1024**3
+
+# Cap on a buffered upload body sent without a Content-Length, which is spooled
+# to local disk as it arrives. Render documents no size for an instance's
+# ephemeral disk, only that exceeding it gets the instance evicted; the one
+# reported figure is about 2 GB. 1 GiB keeps one upload to about half of that;
+# several concurrent large uploads can still exceed it.
+_UPLOAD_WITHOUT_LENGTH_MAX_BYTES = 1 * _GIB
+
+
+def _limit_body(request: Request, limit: int) -> Request:
+    """Wrap `request` in a new Request whose body reads raise a 413 once more
+    than `limit` bytes have arrived."""
+    received = 0
+
+    async def receive() -> Message:
+        nonlocal received
+        message = await request.receive()
+        if message["type"] == "http.request":
+            received += len(message.get("body", b""))
+            if received > limit:
+                logger.warning(
+                    "Upload body without a Content-Length is over the limit",
+                    extra={"body_limit_bytes": limit},
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail=(
+                        "Uploads sent without a Content-Length are limited to "
+                        f"{limit // _GIB} GiB"
+                    ),
+                )
+        return message
+
+    return Request(request.scope, receive)
+
+
 async def _upload_buffered(
     request: Request,
     client: AsyncGumnut,
@@ -667,7 +709,11 @@ async def _upload_buffered(
     library_id: str | None,
 ) -> AssetMediaResponseDto | JSONResponse:
     """Standard buffered upload path — Starlette spools file to /tmp."""
-    async with request.form() as form:
+    # Immich clients send at most two files: assetData, plus sidecarData when
+    # immich-go has an XMP sidecar. The sidecar is accepted and ignored.
+    async with request.form(
+        max_files=2, max_fields=MAX_FORM_FIELDS, max_part_size=MAX_FIELD_BYTES
+    ) as form:
         asset_data_raw = form.get("assetData")
         # Duck-type check: Starlette's UploadFile may not pass isinstance against
         # FastAPI's UploadFile in all environments, so fall back to attribute check.

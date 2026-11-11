@@ -9,6 +9,7 @@ os.environ["TESTING"] = "1"
 
 import base64
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, Mock
@@ -25,6 +26,50 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_person_id,
     uuid_to_gumnut_stack_id,
 )
+
+# Non-file fields the Immich clients send with an upload, from Immich v3.2.0's
+# mobile background uploader (with iOS metadata) and immich-go v0.32.0. Values
+# are synthetic. Both clients send `assetData` after these fields; immich-go
+# may add a `sidecarData` file part after it.
+MOBILE_UPLOAD_FIELDS: list[tuple[str, str]] = [
+    ("filename", "IMG_0001.HEIC"),
+    ("deviceAssetId", "local-asset-id"),
+    ("deviceId", "device-id"),
+    ("fileCreatedAt", "2023-01-01T12:00:00.000Z"),
+    ("fileModifiedAt", "2023-01-01T12:00:00.000Z"),
+    ("isFavorite", "false"),
+    ("duration", "0"),
+    ("visibility", "hidden"),
+    ("livePhotoVideoId", "00000000-0000-4000-8000-000000000000"),
+    (
+        "metadata",
+        json.dumps(
+            [
+                {
+                    "key": "mobile-app",
+                    "value": {
+                        "cloudId": "cloud-id",
+                        "createdAt": "2023-01-01T12:00:00.000",
+                        "latitude": "0.0",
+                        "longitude": "0.0",
+                    },
+                }
+            ]
+        ),
+    ),
+]
+IMMICH_GO_UPLOAD_FIELDS: list[tuple[str, str]] = [
+    ("deviceAssetId", "IMG_0001.JPG-1024"),
+    ("deviceId", "device-id"),
+    ("assetType", "image"),
+    ("fileCreatedAt", "2023-01-01T12:00:00.000Z"),
+    ("fileModifiedAt", "2023-01-01T12:00:00.000Z"),
+    ("isFavorite", "false"),
+    ("fileExtension", ".JPG"),
+    ("duration", "0"),
+    ("isReadOnly", "false"),
+    ("visibility", "timeline"),
+]
 
 
 def make_sdk_status_error(

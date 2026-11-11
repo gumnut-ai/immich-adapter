@@ -1,6 +1,6 @@
 ---
 title: "Importing with immich-go"
-last-updated: 2026-10-09
+last-updated: 2026-11-10
 ---
 
 # Importing with immich-go
@@ -66,7 +66,10 @@ For a `upload from-folder` run, immich-go:
    `POST /api/search/metadata`, and skips assets whose checksum (base64 SHA-1) or
    filename+size already match. Modern immich-go does **not** call
    `/api/assets/bulk-upload-check`.
-3. Uploads each remaining asset with `POST /api/assets` (multipart `assetData`).
+3. Uploads each remaining asset with `POST /api/assets` (multipart `assetData`,
+   plus `sidecarData` when an XMP sidecar exists, which the adapter ignores).
+   immich-go streams the body without a `Content-Length`, so the adapter
+   buffers it and rejects an upload over 1 GiB with 413.
    immich-go sends an `x-immich-checksum` header, but the adapter does not use
    that header for upload-time duplicate detection. It forwards the file to the
    Gumnut API, which may report a duplicate; the adapter then returns Immich's
@@ -83,3 +86,7 @@ For a `upload from-folder` run, immich-go:
 - **"invalid semantic version" at connect time**: `.immich-container-tag` must hold
   a semver value (e.g. `v3.1.0`); immich-go parses `/api/server/about`'s `version`
   and aborts if it can't.
+- **413 on a large video**: immich-go sends uploads without a `Content-Length`,
+  and the adapter rejects those over 1 GiB. Upload that file through the Immich
+  web or mobile app instead; they send a `Content-Length`, so large files stream
+  through the adapter without that limit.
