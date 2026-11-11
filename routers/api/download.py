@@ -73,6 +73,12 @@ _ARCHIVE_CDN_CHUNK_SIZE = 64 * 1024
 _ARCHIVE_ZIP_MAX_WORKERS = 8
 _MAX_ARCHIVE_COMPONENT_BYTES = 255
 _UNSAFE_FILENAME_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+# Most asset IDs one `/archive` request may name, and the most `/info` places
+# in one archive group, so every group `/info` returns is a valid `/archive`
+# request. The count closes a group before the byte target only when its
+# originals average under `DEFAULT_DOWNLOAD_ARCHIVE_SIZE / _MAX_ARCHIVE_ASSETS`
+# (about 107 KB at the default target).
+_MAX_ARCHIVE_ASSETS = 5_000
 _archive_zip_executor: ThreadPoolExecutor | None = None
 _archive_zip_executor_lock = Lock()
 
@@ -127,8 +133,12 @@ async def _assets_by_ids(
     *,
     include: list[str],
 ) -> AsyncIterator[AssetResponse]:
-    """Yield asset metadata in request order, one backend-sized chunk at a time."""
-    for asset_id_chunk in batched(asset_ids, GUMNUT_API_MAX_BULK_IDS):
+    """Yield each distinct asset once in first-seen order, chunk by chunk.
+
+    Raises the batch route's 400 as soon as a chunk lacks a requested asset, so
+    a list naming an inaccessible ID stops before fetching later chunks.
+    """
+    for asset_id_chunk in batched(dict.fromkeys(asset_ids), GUMNUT_API_MAX_BULK_IDS):
         chunk = [uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_id_chunk]
         assets_by_id: dict[str, AssetResponse] = {}
         async for asset in client.assets.list(
@@ -138,8 +148,10 @@ async def _assets_by_ids(
         ):
             assets_by_id[asset.id] = asset
         for asset_id in chunk:
-            if asset := assets_by_id.get(asset_id):
-                yield asset
+            asset = assets_by_id.get(asset_id)
+            if asset is None:
+                raise _member_unavailable_error()
+            yield asset
 
 
 async def _abatched[T](items: AsyncIterable[T], size: int) -> AsyncIterator[list[T]]:
@@ -171,7 +183,7 @@ async def _validated_info_assets_by_ids(
     asset_ids: list[UUID],
 ) -> list[AssetResponse]:
     """Resolve every requested asset before building download info."""
-    assets = [
+    return [
         asset
         async for asset in _assets_by_ids(
             client,
@@ -179,9 +191,6 @@ async def _validated_info_assets_by_ids(
             include=_DOWNLOAD_INFO_INCLUDE,
         )
     ]
-    if len(assets) != len(asset_ids):
-        raise _member_unavailable_error()
-    return assets
 
 
 async def _select_asset_root(
@@ -266,9 +275,8 @@ async def _validated_archive_assets(
     invalid version chain fails the request up front. Members resolve in
     ``_abatched`` waves that keep only the compact ``_ArchiveAsset`` rows, so the
     full ``AssetResponse`` payloads (metadata + signed variants) never accumulate
-    across an uncapped ``assetIds`` list; ``cancel_on_error`` drops a doomed
-    request's queued siblings. The final count check keeps the fail-up-front
-    missing-ID contract before streaming begins.
+    across the request; ``cancel_on_error`` drops a doomed request's queued
+    siblings.
     """
     resolved: list[_ArchiveAsset] = []
     async for wave in _abatched(
@@ -284,8 +292,6 @@ async def _validated_archive_assets(
                 cancel_on_error=True,
             )
         )
-    if len(resolved) != len(asset_ids):
-        raise _member_unavailable_error()
     return resolved
 
 
@@ -370,7 +376,9 @@ async def _build_download_info(
             archive_size += size
             # Match Immich: the asset that crosses the threshold remains in the
             # current archive, so one oversized asset naturally forms one archive.
-            if archive_size > target_size:
+            # Unlike Immich, a group also closes at `_MAX_ARCHIVE_ASSETS`, so
+            # `/archive` accepts every group returned here.
+            if archive_size > target_size or len(archive_ids) >= _MAX_ARCHIVE_ASSETS:
                 archives.append(
                     DownloadArchiveInfo(assetIds=archive_ids, size=archive_size)
                 )
@@ -619,7 +627,16 @@ async def download_archive(
     Honors ``edited`` like the single-asset ``/original`` route: ``edited``
     false/omitted (the upstream default) streams each member's position-0
     uploaded original, while ``edited=true`` streams the current rendering.
+
+    Rejects more than ``_MAX_ARCHIVE_ASSETS`` IDs before any backend call, and
+    streams one member per distinct asset in first-seen order. Unlike Immich,
+    which writes a suffixed member for each repeat, repeats add no member.
     """
+    if len(request.assetIds) > _MAX_ARCHIVE_ASSETS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"assetIds must contain at most {_MAX_ARCHIVE_ASSETS} items",
+        )
     assets = await _validated_archive_assets(
         client, request.assetIds, edited=bool(request.edited)
     )

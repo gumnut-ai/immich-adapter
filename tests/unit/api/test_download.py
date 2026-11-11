@@ -19,6 +19,7 @@ from gumnut.types.asset_response import AssetResponse
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.download import (
+    _MAX_ARCHIVE_ASSETS,
     _abatched,
     _archive_content_disposition,
     _ArchiveAsset,
@@ -103,6 +104,16 @@ def _compact_archive_asset(asset: AssetResponse) -> _ArchiveAsset:
         modified_at=asset.file_data.file_modified_at,
         size=asset.file_size_bytes,
         url=asset.asset_urls["original"].url,
+    )
+
+
+def _list_requested_assets(**kwargs: Any) -> MockSyncCursorPage:
+    """Backend stand-in that returns one asset for each requested ID."""
+    return MockSyncCursorPage(
+        [
+            _download_asset(safe_uuid_from_asset_id(gumnut_id))
+            for gumnut_id in kwargs["ids"]
+        ]
     )
 
 
@@ -196,11 +207,16 @@ async def test_archive_uses_requested_archive_name_in_content_disposition() -> N
 
 
 @pytest.mark.anyio
-async def test_assets_by_ids_chunks_backend_filter_and_preserves_duplicates() -> None:
+async def test_assets_by_ids_chunks_backend_filter_in_request_order() -> None:
     asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
-    selected = _download_asset(asset_ids[0])
+    assets = [_download_asset(asset_id) for asset_id in asset_ids]
     client = Mock()
-    pages = iter([MockSyncCursorPage([selected]), MockSyncCursorPage([selected])])
+    pages = iter(
+        [
+            MockSyncCursorPage(list(reversed(assets[:GUMNUT_API_MAX_BULK_IDS]))),
+            MockSyncCursorPage(assets[GUMNUT_API_MAX_BULK_IDS:]),
+        ]
+    )
     conversion_counts: list[int] = []
 
     def list_assets(**kwargs: Any) -> MockSyncCursorPage:
@@ -216,18 +232,36 @@ async def test_assets_by_ids_chunks_backend_filter_and_preserves_duplicates() ->
             asset
             async for asset in _assets_by_ids(
                 client,
-                [*asset_ids, asset_ids[0]],
+                asset_ids,
                 include=["file_data", "variants"],
             )
         ]
 
-    assert result == [selected, selected]
+    assert result == assets
     assert client.assets.list.call_count == 2
-    assert conversion_counts == [GUMNUT_API_MAX_BULK_IDS, len(asset_ids) + 1]
+    assert conversion_counts == [GUMNUT_API_MAX_BULK_IDS, len(asset_ids)]
     first_call, second_call = client.assets.list.call_args_list
     assert len(first_call.kwargs["ids"]) == GUMNUT_API_MAX_BULK_IDS
-    assert len(second_call.kwargs["ids"]) == 2
+    assert len(second_call.kwargs["ids"]) == 1
     assert first_call.kwargs["include"] == ["file_data", "variants"]
+
+
+@pytest.mark.anyio
+async def test_assets_by_ids_stops_at_first_chunk_missing_an_asset() -> None:
+    asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
+    client = Mock()
+    client.assets.list = Mock(
+        return_value=MockSyncCursorPage(
+            [_download_asset(asset_id) for asset_id in asset_ids[1:]]
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        async for _ in _assets_by_ids(client, asset_ids, include=[]):
+            pass
+
+    assert exc_info.value.status_code == 400
+    assert client.assets.list.call_count == 1
 
 
 @pytest.mark.anyio
@@ -243,16 +277,14 @@ async def test_assets_by_ids_pins_exact_bulk_boundaries(
 ) -> None:
     asset_ids = [uuid4() for _ in range(asset_count)]
     client = Mock()
-    client.assets.list = Mock(
-        side_effect=[MockSyncCursorPage([]) for _ in expected_chunk_lengths]
-    )
+    client.assets.list = Mock(side_effect=_list_requested_assets)
 
     result = [
         asset
         async for asset in _assets_by_ids(client, asset_ids, include=["file_data"])
     ]
 
-    assert result == []
+    assert [safe_uuid_from_asset_id(asset.id) for asset in result] == asset_ids
     assert [
         len(call.kwargs["ids"]) for call in client.assets.list.call_args_list
     ] == expected_chunk_lengths
@@ -1348,3 +1380,144 @@ async def test_archive_cancels_pending_members_when_one_preflight_fails() -> Non
     assert started, "expected sibling lookups to begin before the failure"
     assert set(cancelled) == set(started)
     assert completed == []
+
+
+@pytest.mark.anyio
+async def test_archive_streams_one_member_per_distinct_asset_in_first_seen_order() -> (
+    None
+):
+    first_id, second_id = uuid4(), uuid4()
+    client = Mock()
+    client.assets.list = Mock(side_effect=_list_requested_assets)
+    fetched_urls: list[str] = []
+
+    async def fake_cdn_chunks(url: str, state: object) -> AsyncIterator[bytes]:
+        fetched_urls.append(url)
+        yield url.encode()
+
+    with patch("routers.api.download._cdn_asset_chunks", side_effect=fake_cdn_chunks):
+        response = await download_archive(
+            DownloadArchiveDto(
+                assetIds=[second_id, first_id, second_id, first_id, second_id]
+            ),
+            client=client,
+        )
+        archive = await _collect_response_body(response)
+
+    expected_urls = [
+        f"https://cdn.example.com/{second_id}",
+        f"https://cdn.example.com/{first_id}",
+    ]
+    assert fetched_urls == expected_urls
+    with ZipFile(BytesIO(archive)) as zip_file:
+        assert [zip_file.read(name) for name in zip_file.namelist()] == [
+            url.encode() for url in expected_urls
+        ]
+    assert client.assets.list.call_args.kwargs["ids"] == [
+        uuid_to_gumnut_asset_id(second_id),
+        uuid_to_gumnut_asset_id(first_id),
+    ]
+
+
+@pytest.mark.anyio
+async def test_archive_collapses_repeats_before_chunking_backend_lookups() -> None:
+    asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
+    client = Mock()
+    client.assets.list = Mock(side_effect=_list_requested_assets)
+
+    response = await download_archive(
+        DownloadArchiveDto(assetIds=[*asset_ids, asset_ids[0], asset_ids[-1]]),
+        client=client,
+    )
+    body = cast(AsyncGenerator[bytes], response.body_iterator)
+    await body.aclose()
+
+    assert [len(call.kwargs["ids"]) for call in client.assets.list.call_args_list] == [
+        GUMNUT_API_MAX_BULK_IDS,
+        1,
+    ]
+
+
+@pytest.mark.anyio
+async def test_archive_accepts_exactly_the_asset_limit() -> None:
+    asset_ids = [uuid4() for _ in range(_MAX_ARCHIVE_ASSETS)]
+    client = Mock()
+    client.assets.list = Mock(side_effect=_list_requested_assets)
+
+    response = await download_archive(
+        DownloadArchiveDto(assetIds=asset_ids), client=client
+    )
+    body = cast(AsyncGenerator[bytes], response.body_iterator)
+    await body.aclose()
+
+    assert (
+        sum(len(call.kwargs["ids"]) for call in client.assets.list.call_args_list)
+        == _MAX_ARCHIVE_ASSETS
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("repeat_last", [False, True])
+async def test_archive_rejects_lists_over_the_asset_limit_before_backend_calls(
+    repeat_last: bool,
+) -> None:
+    asset_ids = [uuid4() for _ in range(_MAX_ARCHIVE_ASSETS)]
+    asset_ids.append(asset_ids[-1] if repeat_last else uuid4())
+    client = Mock()
+    client.assets.list = Mock(side_effect=_list_requested_assets)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await download_archive(DownloadArchiveDto(assetIds=asset_ids), client=client)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == (
+        f"assetIds must contain at most {_MAX_ARCHIVE_ASSETS} items"
+    )
+    client.assets.list.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_info_counts_each_distinct_requested_asset_once() -> None:
+    first_id, second_id = uuid4(), uuid4()
+    sizes = {first_id: 7, second_id: 11}
+
+    def list_assets(**kwargs: Any) -> MockSyncCursorPage:
+        return MockSyncCursorPage(
+            [
+                _download_asset(asset_id, size=sizes[asset_id])
+                for asset_id in map(safe_uuid_from_asset_id, kwargs["ids"])
+            ]
+        )
+
+    client = Mock()
+    client.assets.list = Mock(side_effect=list_assets)
+
+    result = await get_download_info(
+        DownloadInfoDto(assetIds=[second_id, first_id, second_id, second_id]),
+        client=client,
+    )
+
+    assert result.totalSize == 18
+    assert [archive.assetIds for archive in result.archives] == [[second_id, first_id]]
+    assert client.assets.list.call_args.kwargs["ids"] == [
+        uuid_to_gumnut_asset_id(second_id),
+        uuid_to_gumnut_asset_id(first_id),
+    ]
+
+
+@pytest.mark.anyio
+async def test_info_closes_groups_at_the_archive_asset_limit() -> None:
+    assets = [_download_asset(uuid4(), size=1) for _ in range(_MAX_ARCHIVE_ASSETS + 1)]
+
+    async def asset_stream() -> AsyncIterator[AssetResponse]:
+        for asset in assets:
+            yield asset
+
+    result = await _build_download_info(asset_stream(), 2**50, Mock())
+
+    assert [len(archive.assetIds) for archive in result.archives] == [
+        _MAX_ARCHIVE_ASSETS,
+        1,
+    ]
+    assert [archive.size for archive in result.archives] == [_MAX_ARCHIVE_ASSETS, 1]
+    assert result.totalSize == _MAX_ARCHIVE_ASSETS + 1
