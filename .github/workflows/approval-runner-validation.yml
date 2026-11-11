@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: gumnut-ai/automation
-          ref: c14c5a06778622f4221aa8aa5114ece628494858
+          ref: a9db381acd511bdf0e16564a200517df96c3a144
           path: .approval-runtime
           persist-credentials: false
       # Synthetic API fixtures cover real submit/readback logic, never a live review.
@@ -37,7 +37,7 @@ jobs:
       # An empty assessment exercises the composite without API requests or writes.
       - name: Empty assessment
         id: inspect
-        uses: gumnut-ai/automation/actions/pr-approval@c14c5a06778622f4221aa8aa5114ece628494858 # zizmor: ignore[ref-version-mismatch]
+        uses: gumnut-ai/automation/actions/pr-approval@a9db381acd511bdf0e16564a200517df96c3a144 # zizmor: ignore[ref-version-mismatch]
         with:
           operation: inspect
           bot-login: fixture-reviewer[bot]
