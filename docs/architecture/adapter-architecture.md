@@ -264,6 +264,14 @@ threshold, missing or invalid lengths, including incoming chunked transfers,
 use the buffered path; this preserves multipart handling that needs a seekable
 upload file.
 
+Both paths cap the number and size of non-file fields, with limits in
+`services/streaming_form_parser.py`; the streaming path also caps their total.
+Streaming accepts one file part, `assetData`. The buffered path also accepts
+the `sidecarData` file part that immich-go sends, and ignores it. The threshold
+bounds a buffered body that has a `Content-Length`. A body without one, such as
+immich-go's chunked uploads, is counted as it arrives and rejected with 413
+past a fixed limit.
+
 The buffered path also inspects seekable video files and drops iOS Live Photo
 `.MOV` companions because the Gumnut API does not support live photos. The
 streaming path cannot perform that seek-based detection, so setting the
@@ -275,8 +283,10 @@ backpressure without buffering the complete asset. If the client disconnects
 during streaming, the pipeline propagates cancellation through the pipe and
 upstream request. The route handles disconnects from either path and represents
 the aborted request internally as HTTP 499 (`ClientDisconnect`). The adapter
-does not impose a fixed total upload deadline. Resumable uploads are
-unimplemented.
+does not impose a fixed total upload deadline. Once the Gumnut API has answered
+a streamed upload, the pipeline reads the rest of the body for only a short,
+fixed time before it stops and returns the result.
+Resumable uploads are unimplemented.
 
 ### Batch downloads
 
