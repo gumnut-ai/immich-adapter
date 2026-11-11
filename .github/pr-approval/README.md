@@ -159,7 +159,7 @@ The coordinator and request routing are maintained in
 [gumnut-ai/automation](https://github.com/gumnut-ai/automation), using one reviewed
 immutable revision for approval actions and their regression suite. Claude review
 and native toolchain pins can advance independently. The canonical
-[standing approval policy](https://github.com/gumnut-ai/automation/blob/c14c5a06778622f4221aa8aa5114ece628494858/README.md#standing-approval-policy)
+[standing approval policy](https://github.com/gumnut-ai/automation/blob/a9db381acd511bdf0e16564a200517df96c3a144/README.md#standing-approval-policy)
 describes the shared decision rules. This repository retains event sources,
 schedules, permissions, App credentials and the protected publisher environment.
 Shared implementation tests run in the automation repository.
