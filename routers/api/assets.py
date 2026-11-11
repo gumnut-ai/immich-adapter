@@ -668,9 +668,11 @@ async def upload_asset(
 _GIB = 1024**3
 
 # Cap on a buffered upload body sent without a Content-Length, which is spooled
-# to local disk as it arrives. Above the Gumnut API's default storage quota of
-# 10 GB, so an upload this large would fail for a default account anyway.
-_UPLOAD_WITHOUT_LENGTH_MAX_BYTES = 10 * _GIB
+# to local disk as it arrives. Render documents no size for an instance's
+# ephemeral disk, only that exceeding it gets the instance evicted; the one
+# reported figure is about 2 GB. 1 GiB keeps one upload to about half of that;
+# several concurrent large uploads can still exceed it.
+_UPLOAD_WITHOUT_LENGTH_MAX_BYTES = 1 * _GIB
 
 
 def _limit_body(request: Request, limit: int) -> Request:
