@@ -202,7 +202,7 @@ async def test_closing_a_sessions_sockets_logs_carry_no_token(telemetry, redis):
     assert "Failed to disconnect a deleted session's socket" in emitted
     assert "RuntimeError" in telemetry.stdout.getvalue()
     assert token not in emitted
-    assert _records_with(token) == []
+    assert telemetry.records_with(token) == []
 
 
 def test_session_route_in_access_log_carries_no_token(telemetry):
