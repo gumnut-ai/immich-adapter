@@ -647,7 +647,7 @@ async def upload_asset(
         if content_length is None:
             # The threshold bounds a buffered body with a Content-Length; one
             # without (immich-go sends chunked bodies) needs its own bound.
-            request = _limit_body(request, UPLOAD_WITHOUT_LENGTH_MAX_BYTES)
+            request = _limit_body(request, _UPLOAD_WITHOUT_LENGTH_MAX_BYTES)
         return await _upload_buffered(request, client, current_user, library_id)
     except ClientDisconnect:
         # The client hung up before finishing the upload (mobile backgrounding,
@@ -665,16 +665,17 @@ async def upload_asset(
         )
 
 
-GIB = 1024**3
+_GIB = 1024**3
 
 # Cap on a buffered upload body sent without a Content-Length, which is spooled
 # to local disk as it arrives. Above the Gumnut API's default storage quota of
 # 10 GB, so an upload this large would fail for a default account anyway.
-UPLOAD_WITHOUT_LENGTH_MAX_BYTES = 10 * GIB
+_UPLOAD_WITHOUT_LENGTH_MAX_BYTES = 10 * _GIB
 
 
 def _limit_body(request: Request, limit: int) -> Request:
-    """Return the request with a receive that fails with 413 past `limit` bytes."""
+    """Wrap `request` in a new Request whose body reads raise a 413 once more
+    than `limit` bytes have arrived."""
     received = 0
 
     async def receive() -> Message:
@@ -691,7 +692,7 @@ def _limit_body(request: Request, limit: int) -> Request:
                     status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                     detail=(
                         "Uploads sent without a Content-Length are limited to "
-                        f"{limit // GIB} GiB"
+                        f"{limit // _GIB} GiB"
                     ),
                 )
         return message
@@ -706,8 +707,8 @@ async def _upload_buffered(
     library_id: str | None,
 ) -> AssetMediaResponseDto | JSONResponse:
     """Standard buffered upload path — Starlette spools file to /tmp."""
-    # Immich sends at most two files, assetData and sidecarData (immich-go
-    # sends both); the sidecar is accepted and ignored.
+    # Immich clients send at most two files: assetData, plus sidecarData when
+    # immich-go has an XMP sidecar. The sidecar is accepted and ignored.
     async with request.form(
         max_files=2, max_fields=MAX_FORM_FIELDS, max_part_size=MAX_FIELD_BYTES
     ) as form:

@@ -150,7 +150,7 @@ class TestFormLimits:
         assert exc_info.value.status_code == 400
 
 
-_LIMIT_TARGET = "routers.api.assets.UPLOAD_WITHOUT_LENGTH_MAX_BYTES"
+_LIMIT_TARGET = "routers.api.assets._UPLOAD_WITHOUT_LENGTH_MAX_BYTES"
 
 
 class TestBodyWithoutLengthLimit:
