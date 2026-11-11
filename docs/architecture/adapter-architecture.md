@@ -295,17 +295,23 @@ returns archive groups based on original file sizes. When more than one selector
 is present, the adapter gives precedence to `assetIds`, then `albumId`, then
 `userId`; the default grouping target is `512 MiB`, unless the request supplies
 another positive `archiveSize`. The asset that crosses the target remains in the
-current group, so one large asset can form an archive larger than the target.
+current group, so one large asset can form an archive larger than the target. A
+group also closes once it holds 5,000 assets, the most one archive request
+accepts, so every returned group is a valid archive request. Repeated asset IDs
+count once, matching upstream.
 
-`POST /api/download/archive` preflights every requested asset before returning a
-response. The preflight requests the file metadata, asset metadata, and variants
-needed to verify an accessible URL for the requested rendering, a non-null file
-size, and a usable modified-time fallback; one missing or inaccessible item
-rejects the whole archive. Successful requests stream the signed URL selected
-for each member into an on-the-fly ZIP in request order without taking custody
-of complete assets or archives. CDN bodies are consumed in bounded chunks, ZIP
-generation uses a dedicated bounded executor, and cancellation closes the active
-CDN response and pending archive work.
+`POST /api/download/archive` rejects a list of more than 5,000 asset IDs before
+any backend call, and streams one member per distinct asset. Upstream instead
+writes a suffixed member for each repeated ID. The adapter preflights every
+requested asset before returning a response. The preflight requests the file
+metadata, asset metadata, and variants needed to verify an accessible URL for
+the requested rendering, a non-null file size, and a usable modified-time
+fallback; one missing or inaccessible item rejects the whole archive. Successful
+requests stream the signed URL selected for each member into an on-the-fly ZIP
+in first-seen request order without taking custody of complete assets or
+archives. CDN bodies are consumed in bounded chunks, ZIP generation uses a
+dedicated bounded executor, and cancellation closes the active CDN response and
+pending archive work.
 
 Archive member names are flattened, sanitized, kept unique under
 case-insensitive and Unicode-equivalent comparisons, and bounded to a filesystem
