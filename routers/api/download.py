@@ -135,8 +135,8 @@ async def _assets_by_ids(
 ) -> AsyncIterator[AssetResponse]:
     """Yield each distinct asset once in first-seen order, chunk by chunk.
 
-    Raises the batch route's 400 as soon as a chunk lacks a requested asset, so
-    a list naming an inaccessible ID stops before fetching later chunks.
+    Raises the batch route's 400 before yielding any of a chunk that lacks a
+    requested asset, so a list naming an inaccessible ID stops at that chunk.
     """
     for asset_id_chunk in batched(dict.fromkeys(asset_ids), GUMNUT_API_MAX_BULK_IDS):
         chunk = [uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_id_chunk]
@@ -147,11 +147,10 @@ async def _assets_by_ids(
             limit=GUMNUT_API_MAX_PAGE_SIZE,
         ):
             assets_by_id[asset.id] = asset
+        if any(asset_id not in assets_by_id for asset_id in chunk):
+            raise _member_unavailable_error()
         for asset_id in chunk:
-            asset = assets_by_id.get(asset_id)
-            if asset is None:
-                raise _member_unavailable_error()
-            yield asset
+            yield assets_by_id[asset_id]
 
 
 async def _abatched[T](items: AsyncIterable[T], size: int) -> AsyncIterator[list[T]]:

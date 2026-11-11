@@ -252,15 +252,17 @@ async def test_assets_by_ids_stops_at_first_chunk_missing_an_asset() -> None:
     client = Mock()
     client.assets.list = Mock(
         return_value=MockSyncCursorPage(
-            [_download_asset(asset_id) for asset_id in asset_ids[1:]]
+            [_download_asset(asset_id) for asset_id in asset_ids[:-2]]
         )
     )
+    yielded: list[AssetResponse] = []
 
     with pytest.raises(HTTPException) as exc_info:
-        async for _ in _assets_by_ids(client, asset_ids, include=[]):
-            pass
+        async for asset in _assets_by_ids(client, asset_ids, include=[]):
+            yielded.append(asset)
 
     assert exc_info.value.status_code == 400
+    assert yielded == []
     assert client.assets.list.call_count == 1
 
 
