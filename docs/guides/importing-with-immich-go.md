@@ -1,6 +1,6 @@
 ---
 title: "Importing with immich-go"
-last-updated: 2026-11-10
+last-updated: 2026-11-12
 ---
 
 # Importing with immich-go
@@ -68,8 +68,10 @@ For a `upload from-folder` run, immich-go:
    `/api/assets/bulk-upload-check`.
 3. Uploads each remaining asset with `POST /api/assets` (multipart `assetData`,
    plus `sidecarData` when an XMP sidecar exists, which the adapter ignores).
-   immich-go streams the body without a `Content-Length`, so the adapter
-   buffers it and rejects an upload over 1 GiB with 413.
+   immich-go v0.32.0 streams the multipart body without a known
+   `Content-Length`; with a nonzero streaming threshold, the adapter buffers
+   that request and rejects it with 413 above 1 GiB. Later immich-go versions
+   may use different request framing.
    immich-go sends an `x-immich-checksum` header, but the adapter does not use
    that header for upload-time duplicate detection. It forwards the file to the
    Gumnut API, which may report a duplicate; the adapter then returns Immich's
@@ -86,7 +88,12 @@ For a `upload from-folder` run, immich-go:
 - **"invalid semantic version" at connect time**: `.immich-container-tag` must hold
   a semver value (e.g. `v3.1.0`); immich-go parses `/api/server/about`'s `version`
   and aborts if it can't.
-- **413 on a large video**: immich-go sends uploads without a `Content-Length`,
-  and the adapter rejects those over 1 GiB. Upload that file through the Immich
-  web or mobile app instead; they send a `Content-Length`, so large files stream
-  through the adapter without that limit.
+- **413 on a large video**: the adapter selects the upload path from the headers
+  it receives, not the client name. With a nonzero
+  `STREAMING_UPLOAD_THRESHOLD_BYTES`, a valid `Content-Length` above that
+  threshold uses streaming; a request without a valid length is buffered and
+  rejected above 1 GiB. Immich web and mobile v3.2.0 build multipart uploads
+  from known-size files, but in a proxied or hosted deployment verify that a
+  valid `Content-Length` reaches the adapter before relying on a particular
+  client. See [upload forwarding](../architecture/adapter-architecture.md#upload-forwarding-and-cancellation)
+  for the threshold and streaming-path behavior.
