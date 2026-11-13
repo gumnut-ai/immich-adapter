@@ -208,7 +208,7 @@ steps:
   - name: Prepare pinned Python for AWF
     run: bash scripts/prepare_maintainer_python.sh
 pre-agent-steps:
-  - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+  - uses: actions/setup-node@v7.1.0 # v7.1.0
     with:
       node-version: "24.21.0"
       package-manager-cache: false
