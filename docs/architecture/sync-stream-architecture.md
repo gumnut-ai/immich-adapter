@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-11-10
+last-updated: 2026-11-13
 ---
 
 # Sync Stream Architecture
@@ -23,11 +23,9 @@ See the [sync stream event ordering design
 doc](../design-docs/sync-stream-event-ordering.md) for the full design rationale
 and history.
 
-Failure is not isolated per pass: an unhandled fetch error ends the stream
-without `SyncCompleteV1`, dropping every later pass. Degrade a row to a skip
-only when skipping cannot strand dependent rows; for stacks, that applies to an
-undecodable ID, not an empty member read. Retriable failures must propagate so
-the event cursor remains unacknowledged.
+An unhandled fetch error ends the stream without `SyncCompleteV1`. The failed
+event and later passes are left for retry, subject to the
+[buffered-delete limitation](#interrupted-delete-phase).
 
 ## Event Classification
 
@@ -141,14 +139,10 @@ pass ends (see `docs/references/asset-edits-and-downloads.md`).
 
 ## Face person_id Handling
 
-`face_created` events have person_id nulled out (face detection never assigns a
-person). `face_updated` events use the causally-consistent person_id from the
-event payload instead of current entity state. Payload person_ids are verified
-against current Gumnut state before the faces that carry them are emitted; a
-person the Gumnut API no longer finds is nulled out on the outgoing event,
-regardless of whether a `PersonV1` checkpoint exists. This prevents stale
-payload references (from clustering runs that predate a person's deletion) from
-leaking across sync cycles and causing FK violations on the client.
+Face creation emits an unassigned face. A later clustering run may assign a
+person whose creation is outside the sync window. Face updates use the
+event-time person reference when the payload supplies it, subject to
+[current-state verification](#current-state-verification-is-not-snapshot-aware).
 
 ## User Preferences (minimumFaces)
 
@@ -172,7 +166,10 @@ concept.
 
 ## Album Cover Handling
 
-`album_updated` events use the causally-consistent `album_cover_asset_id` from the event payload instead of the entity's current computed cover (which is derived at fetch time via a lateral join and may reference an asset outside the sync window). Payload cover asset IDs are verified against production the same way face person_ids are — 404s null the cover regardless of `AssetV1` checkpoint state.
+Album updates use the event-time cover reference when the payload supplies it.
+This keeps an asset added after the event from becoming its cover. The
+[current-state verification](#current-state-verification-is-not-snapshot-aware)
+checks the referenced asset within the session's library, including trash.
 
 ## Album Owner Album-User Link (v3)
 
@@ -200,53 +197,26 @@ no unshare operation).
 
 ## Stacks (StacksV1)
 
-`StacksV1` uses the event cursor and streams before assets. The mobile timeline
-hides an asset whose `stackId` names an unknown stack, so a `stack_created` or
-`stack_updated` event must emit `StackV1` before its member assets. The client
-has no stack foreign key (the column is indexed only); this is a visibility
-constraint. Deletes use the inverse order, with `StackDeleteV1` after asset
-deletes.
+`StacksV1` uses the event cursor. The mobile timeline hides assets whose
+`stackId` names an unknown stack, so stack upserts precede member upserts and
+stack deletes follow asset deletes. Every emitted stack needs an effective
+primary, even when Gumnut has no pinned primary. An incomplete member read
+leaves the event for retry.
 
-`StackV1.primaryAssetId` is required but an unpinned Gumnut stack has no primary
-on its row. Sync therefore reads each stack together with its live member IDs,
-applies the shared effective-primary rule, and carries only the resulting UUID
-into the converter. A stack with a live member and no trashed pin costs no
-further request, which keeps a first sync inside the upstream rate limit. Only a
-pin outside the live members or a stack with no live member needs a
-concurrency-bounded member read. A row without member IDs or an empty all-state
-member read is retryable, because the row still exists; propagating the error
-truncates the stream before its cursor is acked.
+A missing stack row can strand otherwise valid member rows. The stream accepts
+the absence when an in-window delete or a direct stack read returning `404`
+establishes that the row is gone. An unexplained absence ends the stream so it
+can retry before syncing member assets. Assets with undecodable stack IDs sync
+as loose assets. [Stream orchestration](../../routers/api/sync/stream.py) owns
+the missing-row guard, and
+[entity hydration](../../routers/api/sync/entity_fetch.py) owns primary
+selection and member reads.
 
-A stack row **absent from the bulk stack read** is likewise retriable —
-skipping it would advance the cursor past the stack while the asset pass still
-stamps `stackId` on its members, hiding the burst on the mobile timeline. The
-guard first excuses exactly the ids with a `stack_deleted` event in the window:
-first the current events page, then a look-ahead scan of the remaining stack
-events up to the window bound (the events API has no entity-id filter). For any
-absence still unexplained, it performs a direct stack read; a `404` confirms
-that the stack was deleted, including when its delete landed in an earlier sync
-because the feed is not in commit order. A successful direct read leaves the
-absence unexplained, so the pass fails and truncates the stream with the cursor
-preserved; another direct-read failure also truncates the stream rather than
-excusing the row. Read lag resolves on the next sync.
-Undecodable-id rows are excluded from the guard — the read returned them; they
-are degraded deliberately.
-
-The asset converter maps a member's `stack_id` to the Immich `stackId` through
-the shared `immich_stack_id` helper (`gumnut_id_conversion.py`); the upload-ready
-WebSocket payload uses the same helper, so both surfaces treat membership
-identically.
-
-When a stack dissolves, the Gumnut API emits an `asset_updated` clearing each
-member's `stack_id` before `stack_deleted`. Those upserts run in phase 1 and the
-stack delete in phase 2, so members stop referencing the stack before the
-client removes it. Asset updates use the payload's event-time `stack_id`,
-preventing a later move outside the sync window from leaking into the current
-event. Unlike the face→person and album→cover payload references, stack
-references are deliberately not FK-checked or verified per event: with no
-client-side `stackId` FK, a transient reference to an already-removed stack is
-a self-healing timeline-visibility gap, not an unacknowledgeable insert
-failure.
+Asset updates that carry stack membership in the event payload preserve that
+event-time value. When a stack dissolves, member updates clear their references
+before the client receives the stack delete. The client can accept an asset
+with an unknown `stackId` because it has no stack FK. Subsequent events can
+resolve the resulting timeline visibility gap.
 
 `PartnerStacksV1` remains a no-op because partner sharing is unsupported.
 
@@ -299,13 +269,18 @@ The adapter depends on the events API response shape (`EventsResponse`). Fields 
 
 ### Current-state verification is not snapshot-aware
 
-Payload FK verification reads current Gumnut state while the events query is
-bounded at the first read's `as_of`. If a referenced person or asset is deleted
-during the cycle, verification can null the reference one cycle before the
-bounded delete event arrives. The client converges on the same final state; the
-temporary early null is preferred to emitting an FK that can permanently wedge
-sync. Snapshot-aware verification would require an event-timeline lookup or
-entity reads bounded by `as_of`, which only bounds the events feed.
+The stream uses parent rows already emitted or known absent in the current
+stream and bulk-reads unresolved event-time person and cover references from
+the Gumnut API. A parent absent from a completed read can clear the outgoing
+reference even if the client has a checkpoint for the parent type. A failed
+read ends the stream without completion, leaving the dependent event for
+retry. [Stream orchestration](../../routers/api/sync/stream.py) and
+[FK verification](../../routers/api/sync/fk_integrity.py) own these checks.
+
+These reads use current state. The events feed alone is bounded by the first
+read's `as_of`, so the client may see a cleared reference before it receives
+the parent's delete event. Clearing it lets the client apply the dependent
+row and continue syncing even if the parent is already gone locally.
 
 ### Interrupted delete phase
 
