@@ -17,7 +17,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from gumnut import APIConnectionError, APIStatusError, NotFoundError
+from gumnut import APIConnectionError, APIStatusError, AsyncGumnut, NotFoundError
 
 from routers.immich_models import UserAvatarColor, UserResponseDto
 from routers.utils.gumnut_id_conversion import (
@@ -86,6 +86,24 @@ def make_sdk_status_error(
     request = httpx.Request("GET", "http://test.local/")
     response = httpx.Response(status_code, request=request)
     return cls(message, response=response, body=body)
+
+
+def recording_gumnut_client(
+    requests: list[httpx.Request], *, default_query: dict[str, str] | None = None
+) -> AsyncGumnut:
+    """Build a real SDK client that records each request and answers with an
+    empty page, for asserting what reaches the wire."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": [], "has_more": False})
+
+    return AsyncGumnut(
+        api_key="apikey_test",
+        base_url="https://api.example.test",
+        default_query=default_query,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
 
 
 def make_sdk_connection_error(method: str = "GET") -> APIConnectionError:

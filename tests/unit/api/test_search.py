@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from gumnut import AsyncGumnut
 
 from routers.api.search import (
     _can_list_filter_only,
@@ -42,7 +41,7 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_person_id,
     uuid_to_gumnut_person_id,
 )
-from tests.conftest import MockPaginatedListing
+from tests.conftest import MockPaginatedListing, recording_gumnut_client
 
 
 def _make_person(
@@ -511,17 +510,8 @@ class TestSearchMetadata:
         """A text search filtered by people asks for face links only, on the
         wire, alongside the rating filter."""
         requests: list[httpx.Request] = []
-
-        def respond(request: httpx.Request) -> httpx.Response:
-            requests.append(request)
-            return httpx.Response(200, json={"data": [], "has_more": False})
-
         person_uuid = uuid4()
-        async with AsyncGumnut(
-            api_key="apikey_test",
-            base_url="https://api.example.test",
-            http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
-        ) as client:
+        async with recording_gumnut_client(requests) as client:
             await search_assets(
                 request=MetadataSearchDto(
                     description="sunset", personIds=[person_uuid], isFavorite=True
@@ -877,17 +867,9 @@ class TestSearchMetadataEnumeration:
         self, mock_current_user, dto, handler
     ):
         requests: list[httpx.Request] = []
-
-        def respond(request: httpx.Request) -> httpx.Response:
-            requests.append(request)
-            return httpx.Response(200, json={"data": [], "has_more": False})
-
         people = [uuid4(), uuid4()]
-        async with AsyncGumnut(
-            api_key="apikey_test",
-            base_url="https://api.example.test",
-            default_query={"library_id": "lib_test"},
-            http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        async with recording_gumnut_client(
+            requests, default_query={"library_id": "lib_test"}
         ) as client:
             await handler(
                 request=dto(personIds=people, isFavorite=True),

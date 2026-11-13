@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from gumnut import AsyncGumnut
 
 from routers.api.timeline import (
     fetch_asset_counts,
@@ -35,6 +34,7 @@ from tests.conftest import (
     make_gumnut_stack_members,
     make_sdk_status_error,
     mock_list_stacks,
+    recording_gumnut_client,
 )
 
 # Expected date range query for January 2024 — the most common test timeBucket.
@@ -518,23 +518,11 @@ class TestGetTimeBuckets:
 class TestPersonLinkOnTheWire:
     """Person-filtered timeline reads send person_link=face to the Gumnut API."""
 
-    @staticmethod
-    def _client(requests: list[httpx.Request]) -> AsyncGumnut:
-        def respond(request: httpx.Request) -> httpx.Response:
-            requests.append(request)
-            return httpx.Response(200, json={"data": [], "has_more": False})
-
-        return AsyncGumnut(
-            api_key="apikey_test",
-            base_url="https://api.example.test",
-            http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
-        )
-
     @pytest.mark.anyio
     async def test_buckets_count_face_links_only(self):
         requests: list[httpx.Request] = []
         person_id = uuid4()
-        async with self._client(requests) as client:
+        async with recording_gumnut_client(requests) as client:
             await call_get_time_buckets(personId=person_id, client=client)
 
         assert len(requests) == 1
@@ -547,7 +535,7 @@ class TestPersonLinkOnTheWire:
     async def test_bucket_lists_face_links_only(self):
         requests: list[httpx.Request] = []
         person_id = uuid4()
-        async with self._client(requests) as client:
+        async with recording_gumnut_client(requests) as client:
             with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
                 mock_user_id.return_value = uuid4()
                 await call_get_time_bucket(
@@ -571,7 +559,7 @@ class TestPersonLinkOnTheWire:
     @pytest.mark.anyio
     async def test_unfiltered_buckets_send_no_person_link(self):
         requests: list[httpx.Request] = []
-        async with self._client(requests) as client:
+        async with recording_gumnut_client(requests) as client:
             await call_get_time_buckets(client=client)
 
         assert len(requests) == 1
