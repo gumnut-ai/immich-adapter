@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-11-05
+last-updated: 2026-11-13
 ---
 
 # Development Tools
@@ -92,15 +92,19 @@ triggers, and workflow inputs.
 
 ## OpenAPI Specification Dumper
 
-The `dump_openapi_json.py` tool prints the adapter's OpenAPI specification from the FastAPI app to stdout, without running a server:
+From the repository root, export the adapter's OpenAPI specification using the
+locked project environment.
 
 ```bash
-uv run --locked python tools/dump_openapi_json.py > /tmp/spec.json
+ENVIRONMENT=test SESSION_ENCRYPTION_KEY=dummy-key \
+  uv run --locked python tools/dump_openapi_json.py > /tmp/spec.json
 ```
 
-The exporter sends application import and schema-generation diagnostics to stderr, leaving stdout as one JSON document. Pass the resulting file to the compatibility validator via `--adapter-spec=/tmp/spec.json`.
-
-Run the exporter from the repository root with the locked project environment so it uses the application's dependencies and Python version. `pyproject.toml`, `uv.lock`, and `.python-version` own that environment; the exporter has no separate dependency manifest.
+Importing the app requires both settings. The exporter generates the schema
+without starting the server, so it can use a placeholder session key and run
+without Redis or Gumnut credentials. Diagnostics go to stderr, leaving stdout
+as one JSON document. Pass the output to the validator with
+`--adapter-spec=/tmp/spec.json`.
 
 ## Gumnut SDK Release Lag
 
