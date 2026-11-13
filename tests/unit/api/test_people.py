@@ -5,8 +5,10 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi import HTTPException
+from gumnut import AsyncGumnut
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.people import (
@@ -1086,44 +1088,92 @@ class TestGetPerson:
 class TestGetPersonStatistics:
     """Test the get_person_statistics endpoint."""
 
+    @staticmethod
+    def _counts_page(counts: list[int], has_more: bool = False) -> Mock:
+        page = Mock()
+        page.data = [
+            Mock(count=count, time_bucket=datetime(2024, 12 - i, 1))
+            for i, count in enumerate(counts)
+        ]
+        page.has_more = has_more
+        return page
+
     @pytest.mark.anyio
-    async def test_get_person_statistics_success(
+    async def test_counts_face_linked_photos_across_pages(
         self, sample_gumnut_person, sample_uuid
     ):
-        """Test successful person statistics retrieval."""
+        """The count sums the face-only monthly counts on every page, not the
+        person's asset_count, which also counts photos linked only by a body."""
+        sample_gumnut_person.asset_count = 99
         mock_client = Mock()
         mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
+        mock_client.assets.counts = AsyncMock(
+            side_effect=[
+                self._counts_page([3, 4], has_more=True),
+                self._counts_page([2]),
+            ]
+        )
 
         result = await get_person_statistics(sample_uuid, client=mock_client)
 
-        assert result.assets == 5  # From sample_gumnut_person.asset_count
-        mock_client.people.retrieve.assert_called_once()
+        assert result.assets == 9
+        gumnut_person_id = uuid_to_gumnut_person_id(sample_uuid)
+        mock_client.people.retrieve.assert_awaited_once_with(gumnut_person_id)
+        for call in mock_client.assets.counts.await_args_list:
+            assert call.kwargs["person_id"] == gumnut_person_id
+            assert call.kwargs["extra_query"] == {"person_link": "face"}
 
     @pytest.mark.anyio
-    async def test_get_person_statistics_zero_assets(
+    async def test_person_without_face_linked_photos_reports_zero(
         self, sample_gumnut_person, sample_uuid
     ):
-        """A person with no associated assets reports zero."""
-        sample_gumnut_person.asset_count = 0
         mock_client = Mock()
         mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
+        mock_client.assets.counts = AsyncMock(return_value=self._counts_page([]))
 
         result = await get_person_statistics(sample_uuid, client=mock_client)
 
         assert result.assets == 0
 
     @pytest.mark.anyio
-    async def test_get_person_statistics_none_asset_count_treated_as_zero(
-        self, sample_gumnut_person, sample_uuid
-    ):
-        """asset_count is Optional[int] in the SDK; None coerces to 0."""
-        sample_gumnut_person.asset_count = None
-        mock_client = Mock()
-        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
+    async def test_counts_request_asks_for_face_links_on_the_wire(self, sample_uuid):
+        requests: list[httpx.Request] = []
 
-        result = await get_person_statistics(sample_uuid, client=mock_client)
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if request.url.path.startswith("/api/people/"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": uuid_to_gumnut_person_id(sample_uuid),
+                        "is_hidden": False,
+                        "is_favorite": False,
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "updated_at": "2024-01-01T00:00:00Z",
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "data": [{"time_bucket": "2024-01-01T00:00:00", "count": 7}],
+                    "has_more": False,
+                },
+            )
 
-        assert result.assets == 0
+        async with AsyncGumnut(
+            api_key="apikey_test",
+            base_url="https://api.example.test",
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        ) as client:
+            result = await get_person_statistics(sample_uuid, client=client)
+
+        assert result.assets == 7
+        counts_request = requests[-1]
+        assert counts_request.url.path == "/api/assets/counts"
+        assert counts_request.url.params["person_id"] == uuid_to_gumnut_person_id(
+            sample_uuid
+        )
+        assert counts_request.url.params["person_link"] == "face"
 
     @pytest.mark.anyio
     async def test_get_person_statistics_not_found_propagates(self, sample_uuid):
@@ -1141,6 +1191,7 @@ class TestGetPersonStatistics:
 
         with pytest.raises(NotFoundError):
             await get_person_statistics(sample_uuid, client=mock_client)
+        mock_client.assets.counts.assert_not_called()
 
 
 class TestDeletePerson:

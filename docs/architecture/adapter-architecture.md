@@ -366,10 +366,11 @@ The Gumnut API's person filter also matches photos where the person appears
 only as a body. Immich models people through faces, and its person-page actions
 (feature photo, reassign, move to a new person) need the person's face on the
 photo. So every person-filtered asset read the adapter makes (timeline counts
-and buckets, search, filter-only listings, and random samples) sends
-`person_link=face`, and only alongside a person filter, which the API requires.
-`routers/utils/person_filter.py` owns the query fragment. The person page's
-photo count still reads the person's `asset_count`, which includes body links.
+and buckets, the person's photo count, search, filter-only listings, and random
+samples) sends `person_link=face`, and only alongside a person filter, which
+the API requires. `routers/utils/person_filter.py` owns the query fragment.
+The people list still sorts by the person's `asset_count`, which includes body
+links: a faces-only sort key would cost a counts call per person.
 
 ### Offset translation limitation
 
