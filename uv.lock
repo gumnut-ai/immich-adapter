@@ -350,7 +350,7 @@ wheels = [
 
 [[package]]
 name = "gumnut-sdk"
-version = "0.183.0"
+version = "0.184.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -360,9 +360,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5d/76/c27cd7368fbc560599275676377b6dbdcacb14841a8c29c3a5bb12cd3f3f/gumnut_sdk-0.183.0.tar.gz", hash = "sha256:c0d7d99315fc2e18b4f3a8a8dbda9a30346c7446c65aab8df76aacca8854e6b4", size = 360553, upload-time = "2026-11-02T19:10:58.711Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/54/fd/1c38f26feeb0e07159f01bd60375085a05be755c21df96cde2dc98933763/gumnut_sdk-0.184.0.tar.gz", hash = "sha256:13c157e57df6fc828c4a8b2a59265cc69ec8ec052c78300313d6028163be7611", size = 362358, upload-time = "2026-11-12T17:31:23.743Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a1/7a/6e784c6c86cc7264d94007720e0373891848c960a9892d8af6aa61f1e19d/gumnut_sdk-0.183.0-py3-none-any.whl", hash = "sha256:7094be4382b1b0dd1afbde280631ebdf2d521a9a81708c9dcd7a5e867bf8b537", size = 264586, upload-time = "2026-11-02T19:10:57.209Z" },
+    { url = "https://files.pythonhosted.org/packages/da/a8/f97fc585c467fcbaf26751dbadcb729091350e16f295cb67c205ead622cb/gumnut_sdk-0.184.0-py3-none-any.whl", hash = "sha256:56b889c981222563e0888f43a12ea09f12acdc22de0606badf228004fa312340", size = 265980, upload-time = "2026-11-12T17:31:24.975Z" },
 ]
 
 [[package]]
@@ -890,14 +890,14 @@ wheels = [
 
 [[package]]
 name = "python-engineio"
-version = "4.13.2"
+version = "4.15.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "simple-websocket" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fa/6d/4384c2723adad93a3d6de4297e6d9c8b93be7f778a407f34f6ee0b2bea3e/python_engineio-4.13.2.tar.gz", hash = "sha256:a7732e99cfb7db6ed1aee31f18d7f73bbae086a92f31dee019bc646155d9684e", size = 79639, upload-time = "2026-05-21T21:45:07.578Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/91/b565807fa922620ed575b412bf978d032e4c5d79558b400fdbfe1008c95a/python_engineio-4.15.1.tar.gz", hash = "sha256:1a412e798a90c64fabe7b20798939ae6d4a03f34da8a33d5a21a25a8bbbc3612", size = 93104, upload-time = "2026-10-28T23:53:30.846Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/28/180bfc5c95e83d40cb2abce512684ccad44e4819ec899fc36cb404a19061/python_engineio-4.13.2-py3-none-any.whl", hash = "sha256:8c101cd170e400dc4e970cd523325cde22df8fc25140953f379327055d701a6b", size = 59993, upload-time = "2026-05-21T21:45:06.162Z" },
+    { url = "https://files.pythonhosted.org/packages/38/5c/552f1dce2443dc33ce6b2ee7f67599ba5c83ef5582e2235a9878ac239049/python_engineio-4.15.1-py3-none-any.whl", hash = "sha256:745cb3c07701c719a2906439a00b67e44ef042904036568530a2c3a8cf18c89a", size = 60775, upload-time = "2026-10-28T23:53:29.304Z" },
 ]
 
 [[package]]
@@ -911,15 +911,15 @@ wheels = [
 
 [[package]]
 name = "python-socketio"
-version = "5.17.0"
+version = "5.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bidict" },
     { name = "python-engineio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/04/8647675c93b5e74a3daa41a2a03930bac0cbdcfcf307900f0441ae6550ba/python_socketio-5.17.0.tar.gz", hash = "sha256:c3bbfc4937dcfea7c4d1b182afa94d4a30335d153987e8f2078b344beacf95a0", size = 134574, upload-time = "2026-09-14T22:51:02.968Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/a0/b3c6cfac960bec64ad52b83e7baed825ce256f8506b343aed10d2dc5f747/python_socketio-5.17.1.tar.gz", hash = "sha256:2a3183d7172e5ff772b9c24ef94f1fdf84a09b746925c997b7687ae8017f7247", size = 131117, upload-time = "2026-10-30T11:42:10.519Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/be/44b558c944bc16618483967ecd3424c578705aa33ceee7df8c1e4ab43ea0/python_socketio-5.17.0-py3-none-any.whl", hash = "sha256:b5826fd2f8aa02e11347816349b74ac6b53e8a4f4e4b1cf1388e1aff19b7f3f4", size = 82548, upload-time = "2026-09-14T22:51:01.405Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/bf/ea4cc7d05f8a1c6abf579f510cc17c670456e6e101d7af26b7d60c86e37d/python_socketio-5.17.1-py3-none-any.whl", hash = "sha256:b9a2cc5d4f7155c107d60e6efe6d3f3000197f44b979ac4657641e8a211634fe", size = 82553, upload-time = "2026-10-30T11:42:09.093Z" },
 ]
 
 [[package]]
