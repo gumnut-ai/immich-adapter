@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-11-10
+last-updated: 2026-11-13
 ---
 
 # Immich Adapter Architecture
@@ -359,6 +359,17 @@ response status for both outcomes.
 
 Deploy this handling before enabling album reuse in the Gumnut API. It also
 works with an API that always returns `201` for successful album creation.
+
+### Person filters
+
+The Gumnut API's person filter also matches photos where the person appears
+only as a body. Immich models people through faces, and its person-page actions
+(feature photo, reassign, move to a new person) need the person's face on the
+photo. So every person-filtered asset read the adapter makes (timeline counts
+and buckets, search, filter-only listings, and random samples) sends
+`person_link=face`, and only alongside a person filter, which the API requires.
+`routers/utils/person_filter.py` owns the query fragment. The person page's
+photo count still reads the person's `asset_count`, which includes body links.
 
 ### Offset translation limitation
 

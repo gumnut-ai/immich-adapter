@@ -5,7 +5,9 @@ from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
+from gumnut import AsyncGumnut
 
 from routers.api.timeline import (
     fetch_asset_counts,
@@ -42,6 +44,8 @@ JANUARY_2024_DATE_RANGE = {
     "local_datetime_after": "2023-12-31T23:59:59.999999",
     "local_datetime_before": "2024-02-01T00:00:00",
 }
+# A person-filtered read asks for face links only; see routers/utils/person_filter.py.
+JANUARY_2024_FACE_PERSON_QUERY = {**JANUARY_2024_DATE_RANGE, "person_link": "face"}
 
 
 def _make_data(time_bucket: datetime, count: int) -> Mock:
@@ -256,6 +260,41 @@ class TestFetchAssetCounts:
 
         kwargs = mock_client.assets.counts.call_args[1]
         assert kwargs["person_id"] == "person-456"
+        assert kwargs["extra_query"] == {"person_link": "face"}
+
+    @pytest.mark.anyio
+    async def test_person_link_merges_with_ratings_on_every_page(self):
+        """person_link rides with the rating filter and survives pagination."""
+        mock_client = Mock()
+        mock_client.assets.counts = AsyncMock(
+            side_effect=[
+                _make_counts_response(
+                    [_make_data(datetime(2024, 2, 1), 5)], has_more=True
+                ),
+                _make_counts_response([_make_data(datetime(2024, 1, 1), 10)]),
+            ]
+        )
+
+        await fetch_asset_counts(
+            mock_client, person_id="person-456", ratings=frozenset({5})
+        )
+
+        assert mock_client.assets.counts.call_count == 2
+        for call in mock_client.assets.counts.call_args_list:
+            assert call.kwargs["extra_query"] == {
+                "person_link": "face",
+                "ratings": "5",
+            }
+
+    @pytest.mark.anyio
+    async def test_without_person_sends_no_person_link(self):
+        """The Gumnut API rejects person_link without a person filter."""
+        mock_client = Mock()
+        mock_client.assets.counts = AsyncMock(return_value=_make_counts_response([]))
+
+        await fetch_asset_counts(mock_client, album_id="album-123")
+
+        assert "extra_query" not in mock_client.assets.counts.call_args.kwargs
 
     @pytest.mark.anyio
     async def test_empty_response(self):
@@ -324,6 +363,7 @@ class TestGetTimeBuckets:
         assert result[0].count == 1
         kwargs = mock_client.assets.counts.call_args[1]
         assert kwargs["person_id"] == uuid_to_gumnut_person_id(sample_uuid)
+        assert kwargs["extra_query"] == {"person_link": "face"}
 
     @pytest.mark.anyio
     async def test_get_time_buckets_ascending_order(self):
@@ -473,6 +513,69 @@ class TestGetTimeBuckets:
 
         assert len(result) == 1
         assert result[0].timeBucket == "2024-03-01"
+
+
+class TestPersonLinkOnTheWire:
+    """Person-filtered timeline reads send person_link=face to the Gumnut API."""
+
+    @staticmethod
+    def _client(requests: list[httpx.Request]) -> AsyncGumnut:
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json={"data": [], "has_more": False})
+
+        return AsyncGumnut(
+            api_key="apikey_test",
+            base_url="https://api.example.test",
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        )
+
+    @pytest.mark.anyio
+    async def test_buckets_count_face_links_only(self):
+        requests: list[httpx.Request] = []
+        person_id = uuid4()
+        async with self._client(requests) as client:
+            await call_get_time_buckets(personId=person_id, client=client)
+
+        assert len(requests) == 1
+        sent = requests[0]
+        assert sent.url.path == "/api/assets/counts"
+        assert sent.url.params["person_id"] == uuid_to_gumnut_person_id(person_id)
+        assert sent.url.params["person_link"] == "face"
+
+    @pytest.mark.anyio
+    async def test_bucket_lists_face_links_only(self):
+        requests: list[httpx.Request] = []
+        person_id = uuid4()
+        async with self._client(requests) as client:
+            with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+                mock_user_id.return_value = uuid4()
+                await call_get_time_bucket(
+                    timeBucket="2024-01-01T00:00:00",
+                    personId=person_id,
+                    client=client,
+                )
+
+        assert len(requests) == 1
+        sent = requests[0]
+        assert sent.url.path == "/api/assets"
+        assert sent.url.params.get_list("person_ids") == [
+            uuid_to_gumnut_person_id(person_id)
+        ]
+        assert sent.url.params["person_link"] == "face"
+        assert (
+            sent.url.params["local_datetime_after"]
+            == JANUARY_2024_DATE_RANGE["local_datetime_after"]
+        )
+
+    @pytest.mark.anyio
+    async def test_unfiltered_buckets_send_no_person_link(self):
+        requests: list[httpx.Request] = []
+        async with self._client(requests) as client:
+            await call_get_time_buckets(client=client)
+
+        assert len(requests) == 1
+        assert "person_link" not in requests[0].url.params
 
 
 class TestGetTimeBucket:
@@ -789,8 +892,32 @@ class TestGetTimeBucket:
             mock_client.assets.list.assert_called_once_with(
                 person_ids=[uuid_to_gumnut_person_id(sample_uuid)],
                 include=ASSET_INCLUDE_METADATA_ONLY,
-                extra_query=JANUARY_2024_DATE_RANGE,
+                extra_query=JANUARY_2024_FACE_PERSON_QUERY,
             )
+
+    @pytest.mark.anyio
+    async def test_get_time_bucket_album_filter_wins_without_person_link(
+        self, sample_uuid, mock_sync_cursor_page
+    ):
+        """The album filter replaces the person filter, so no person_link is
+        sent; the Gumnut API rejects person_link without people."""
+        mock_client = Mock()
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = sample_uuid
+            await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00",
+                albumId=sample_uuid,
+                personId=uuid4(),
+                client=mock_client,
+            )
+
+        mock_client.assets.list.assert_called_once_with(
+            album_id=uuid_to_gumnut_album_id(sample_uuid),
+            include=ASSET_INCLUDE_METADATA_ONLY,
+            extra_query=JANUARY_2024_DATE_RANGE,
+        )
 
     @pytest.mark.anyio
     async def test_get_time_bucket_no_matching_assets(self, mock_sync_cursor_page):
@@ -1732,7 +1859,7 @@ class TestTimeBucketStacks:
         assert bucket_read.kwargs == {
             "person_ids": [uuid_to_gumnut_person_id(person_id)],
             "include": ASSET_INCLUDE_METADATA_ONLY,
-            "extra_query": JANUARY_2024_DATE_RANGE,
+            "extra_query": JANUARY_2024_FACE_PERSON_QUERY,
         }
 
     @pytest.mark.anyio
