@@ -1,6 +1,6 @@
 ---
 title: "Upgrading the Immich Target Version"
-last-updated: 2026-11-04
+last-updated: 2026-11-13
 ---
 
 # Upgrading the Immich Target Version
@@ -218,10 +218,12 @@ For each endpoint you are considering implementing, the question is whether the 
 
 The validator reports which Immich routes and parameters the adapter does not expose. Run it against the old and new specs and diff the reports so only the delta needs attention.
 
-```bash
-ENVIRONMENT=test SESSION_ENCRYPTION_KEY=dummy-key \
-  uv run --locked python tools/dump_openapi_json.py > "$S/adapter.json"
+Run the [OpenAPI export command](../references/development-tools.md#openapi-specification-dumper),
+redirecting its output to `"$S/adapter.json"`. The validator compares the
+supplied specs directly, so both Immich inputs come from the tagged files
+extracted in [Step 1](#step-1--extract-both-specs-from-git).
 
+```bash
 uv run tools/validate_api_compatibility.py --immich-spec="$S/old.json" --adapter-spec="$S/adapter.json" > "$S/compat-old.txt"
 uv run tools/validate_api_compatibility.py --immich-spec="$S/new.json" --adapter-spec="$S/adapter.json" > "$S/compat-new.txt"
 diff "$S/compat-old.txt" "$S/compat-new.txt"
@@ -235,7 +237,7 @@ Do all of the above against an RC. Do **not** pin production to one: the pin is 
 
 ## Step 9 — Bump the pin when the release is live
 
-The pin lives in two files that CI checks against each other (the `check-immich-version-sync` job in `.github/workflows/ci.yml`). Render builds the image straight from the repo, so the Dockerfile default is what ships. The full rationale is in [Routes § Bumping the Immich Version](../references/upstream-compatibility.md#bumping-the-immich-version).
+The pin lives in two files that CI checks against each other (the `check-immich-version-sync` job in `.github/workflows/ci.yml`). Render builds the image straight from the repo, so the Dockerfile default is what ships. See [Bumping the Immich Version](../references/upstream-compatibility.md#bumping-the-immich-version) for the rationale.
 
 1. **Update the pin.** Write the tag to `.immich-container-tag`, and in `Dockerfile` update `ARG IMMICH_VERSION` and the `Last updated` comment beside it.
 2. **Regenerate the models from the tagged spec** so the header records the tag, and run the checks:
