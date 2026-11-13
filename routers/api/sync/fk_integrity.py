@@ -15,49 +15,30 @@ from services.checkpoint_store import Checkpoint
 
 logger = logging.getLogger(__name__)
 
-# FK references: gumnut_entity_type -> [(attribute_name, referenced_gumnut_entity_type)]
-FK_REFERENCES: dict[str, list[tuple[str, str]]] = {
-    "face": [("person_id", "person"), ("asset_id", "asset")],
-    "album_asset": [("album_id", "album"), ("asset_id", "asset")],
-    "album": [("album_cover_asset_id", "asset")],
-}
 
+class FKReference(NamedTuple):
+    """Declares an entity FK and its optional event-payload override."""
 
-class PayloadFKOverride(NamedTuple):
-    """Declares a payload key the adapter applies as a causally-consistent FK override.
-
-    event_type: the event_type on which this override is applied (e.g. "face_updated").
-    payload_key: the key in event.payload carrying the referenced ID.
-    referenced_type: the gumnut entity type that the ID refers to (e.g. "person").
-    """
-
-    event_type: str
-    payload_key: str
+    field_name: str
     referenced_type: str
+    payload_override_event: str | None = None
 
 
-# Payload keys that the adapter applies as causally-consistent FK overrides
-# (see payload_override). Used to collect referenced IDs up front so we can
-# verify they still exist in production, regardless of whether the referenced
-# entity type is being streamed in this cycle.
-#
-# Invariant: every (event_type, payload_key, referenced_type) entry here must
-# have a matching (field=payload_key, referenced_type) entry in FK_REFERENCES
-# for the same entity type — otherwise null_deleted_fk_references will not
-# null the payload-overridden field when its referenced entity 404s.
-PAYLOAD_FK_OVERRIDES: dict[str, list[PayloadFKOverride]] = {
+# Each FK is declared once, including the event that can supply its
+# causally-consistent value. The payload event is used to verify those IDs
+# before streaming, even when the referenced entity type is not requested.
+FK_REFERENCES: dict[str, list[FKReference]] = {
     "face": [
-        PayloadFKOverride(
-            event_type="face_updated",
-            payload_key="person_id",
-            referenced_type="person",
-        ),
+        FKReference("person_id", "person", payload_override_event="face_updated"),
+        FKReference("asset_id", "asset"),
+    ],
+    "album_asset": [
+        FKReference("album_id", "album"),
+        FKReference("asset_id", "asset"),
     ],
     "album": [
-        PayloadFKOverride(
-            event_type="album_updated",
-            payload_key="album_cover_asset_id",
-            referenced_type="asset",
+        FKReference(
+            "album_cover_asset_id", "asset", payload_override_event="album_updated"
         ),
     ],
 }
@@ -128,25 +109,25 @@ def check_fk_references(
     if not refs:
         return
 
-    for attr_name, ref_type in refs:
-        ref_id = getattr(entity, attr_name, None)
+    for reference in refs:
+        ref_id = getattr(entity, reference.field_name, None)
         if ref_id is None:
             continue
 
         # If the referenced entity type has a checkpoint, skip the check —
         # the referenced entity may have been synced in a prior cycle
-        ref_sync_types = _GUMNUT_TYPE_TO_SYNC_TYPES.get(ref_type)
+        ref_sync_types = _GUMNUT_TYPE_TO_SYNC_TYPES.get(reference.referenced_type)
         if ref_sync_types and any(t in checkpoint_map for t in ref_sync_types):
             continue
 
-        if ref_id not in stats.streamed_ids.get(ref_type, set()):
+        if ref_id not in stats.streamed_ids.get(reference.referenced_type, set()):
             logger.warning(
                 "Entity references ID not seen in this sync",
                 extra={
                     "entity_type": gumnut_entity_type,
                     "entity_id": getattr(entity, "id", None),
-                    "reference_field": attr_name,
-                    "referenced_type": ref_type,
+                    "reference_field": reference.field_name,
+                    "referenced_type": reference.referenced_type,
                     "referenced_id": ref_id,
                     "cursor": cursor,
                 },
@@ -181,25 +162,25 @@ def null_deleted_fk_references(
         return entity
 
     updates: dict[str, None] = {}
-    for attr_name, ref_type in refs:
-        ref_id = getattr(entity, attr_name, None)
+    for reference in refs:
+        ref_id = getattr(entity, reference.field_name, None)
         if ref_id is None:
             continue
 
-        if ref_id in stats.not_found_ids.get(ref_type, set()):
+        if ref_id in stats.not_found_ids.get(reference.referenced_type, set()):
             logger.info(
                 "Nulling FK reference to deleted entity",
                 extra={
                     "entity_type": gumnut_entity_type,
                     "entity_id": getattr(entity, "id", None),
-                    "reference_field": attr_name,
-                    "referenced_type": ref_type,
+                    "reference_field": reference.field_name,
+                    "referenced_type": reference.referenced_type,
                     "deleted_ref_id": ref_id,
                     "event_type": event_type,
                     "cursor": cursor,
                 },
             )
-            updates[attr_name] = None
+            updates[reference.field_name] = None
 
     if updates and isinstance(entity, BaseModel):
         # Only FK-bearing pydantic entities reach here — FetchedStack has no
@@ -217,28 +198,27 @@ def extract_payload_fk_refs(
 ) -> dict[str, set[str]]:
     """Collect payload-referenced FK IDs from a batch of events.
 
-    For each event whose payload carries a causally-consistent FK override
-    (see ``PAYLOAD_FK_OVERRIDES``), extract the referenced ID and group by
-    referenced entity type. Returns ``{ref_type: {ref_ids...}}``.
+    For each event whose FK metadata declares a payload override, extract the
+    referenced ID and group by entity type. Returns ``{ref_type: {ref_ids...}}``.
 
     The caller uses this set to verify those IDs still exist in production
     before the face/album event is streamed to the client. Without this check
     the adapter would send references to entities deleted between sync cycles,
     causing FK violations on the mobile client.
     """
-    overrides = PAYLOAD_FK_OVERRIDES.get(gumnut_entity_type)
-    if not overrides:
+    references = FK_REFERENCES.get(gumnut_entity_type)
+    if not references:
         return {}
 
     result: dict[str, set[str]] = defaultdict(set)
     for event in events:
         if not isinstance(event.payload, dict):
             continue
-        for override in overrides:
-            if event.event_type != override.event_type:
+        for reference in references:
+            if event.event_type != reference.payload_override_event:
                 continue
-            should_apply, value = payload_override(event.payload, override.payload_key)
+            should_apply, value = payload_override(event.payload, reference.field_name)
             if should_apply and value is not None:
-                result[override.referenced_type].add(value)
+                result[reference.referenced_type].add(value)
 
     return result
