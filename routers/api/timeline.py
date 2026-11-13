@@ -30,6 +30,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_person_id,
 )
+from routers.utils.person_filter import FACE_PERSON_LINK_QUERY
 from routers.utils.rating import RatingFilter, rating_extra_query, rating_filter_values
 from routers.utils.stack_conversion import TimelineStacks, resolve_timeline_stacks
 
@@ -56,7 +57,9 @@ async def fetch_asset_counts(
         kwargs["album_id"] = album_id
     if person_id is not None:
         kwargs["person_id"] = person_id
-    extra_query = rating_extra_query(ratings)
+    extra_query = rating_extra_query(
+        ratings, FACE_PERSON_LINK_QUERY if person_id is not None else None
+    )
     if extra_query is not None:
         kwargs["extra_query"] = extra_query
     if state is not None:
@@ -188,23 +191,22 @@ async def get_time_bucket(
     # ("2024-01-01T00:00:00.000Z") timestamps; the month helpers strip
     # timezone info so boundaries are naive (see month_window's docstring).
     after_bound, before_bound = month_query_bounds(datetime.fromisoformat(timeBucket))
-    date_range_query = {
+    base_query: dict[str, Any] = {
         "local_datetime_after": after_bound,
         "local_datetime_before": before_bound,
     }
 
-    list_kwargs: dict[str, Any] = {
-        "extra_query": rating_extra_query(
-            rating_filter_values(is_favorite=isFavorite), date_range_query
-        ),
-        "include": ASSET_INCLUDE_METADATA_ONLY,
-    }
+    list_kwargs: dict[str, Any] = {"include": ASSET_INCLUDE_METADATA_ONLY}
     if isTrashed:
         list_kwargs["state"] = "trashed"
     if albumId:
         list_kwargs["album_id"] = uuid_to_gumnut_album_id(albumId)
     elif personId:
         list_kwargs["person_ids"] = [uuid_to_gumnut_person_id(personId)]
+        base_query.update(FACE_PERSON_LINK_QUERY)
+    list_kwargs["extra_query"] = rating_extra_query(
+        rating_filter_values(is_favorite=isFavorite), base_query
+    )
 
     filtered_assets = [a async for a in client.assets.list(**list_kwargs)]
 

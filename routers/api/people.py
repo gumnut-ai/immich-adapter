@@ -9,6 +9,7 @@ from gumnut.types import PersonResponse
 from pydantic.json_schema import SkipJsonSchema
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
+from routers.api.timeline import fetch_asset_counts
 from routers.immich_models import (
     AssetFaceUpdateDto,
     AssetFaceUpdateItem,
@@ -361,11 +362,16 @@ async def get_person_statistics(
     id: UUID,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> PersonStatisticsResponseDto:
+    """Count the live photos that show this person's face.
+
+    The person's ``asset_count`` also counts photos linked only by a body, so
+    sum the face-only monthly counts the person page's timeline is built from
+    instead. The retrieve keeps the 404 for an unknown person.
     """
-    Get asset statistics for a specific person.
-    """
-    gumnut_person = await client.people.retrieve(uuid_to_gumnut_person_id(id))
-    return PersonStatisticsResponseDto(assets=gumnut_person.asset_count or 0)
+    gumnut_person_id = uuid_to_gumnut_person_id(id)
+    await client.people.retrieve(gumnut_person_id)
+    buckets = await fetch_asset_counts(client, person_id=gumnut_person_id)
+    return PersonStatisticsResponseDto(assets=sum(b.count for b in buckets))
 
 
 @router.delete("/{id}", status_code=204)

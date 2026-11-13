@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from gumnut import AsyncGumnut
 
 from routers.api.search import (
     _can_list_filter_only,
@@ -42,7 +41,7 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_person_id,
     uuid_to_gumnut_person_id,
 )
-from tests.conftest import MockPaginatedListing
+from tests.conftest import MockPaginatedListing, recording_gumnut_client
 
 
 def _make_person(
@@ -502,6 +501,34 @@ class TestSearchMetadata:
 
         call_kwargs = mock_client.assets.list.call_args.kwargs
         assert call_kwargs["person_ids"] == [gumnut_person_id]
+        assert call_kwargs["extra_query"] == {"person_link": "face"}
+
+    @pytest.mark.anyio
+    async def test_text_search_with_people_sends_face_person_link(
+        self, mock_current_user
+    ):
+        """A text search filtered by people asks for face links only, on the
+        wire, alongside the rating filter."""
+        requests: list[httpx.Request] = []
+        person_uuid = uuid4()
+        async with recording_gumnut_client(requests) as client:
+            await search_assets(
+                request=MetadataSearchDto(
+                    description="sunset", personIds=[person_uuid], isFavorite=True
+                ),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        assert len(requests) == 1
+        sent = requests[0]
+        assert sent.method == "GET"
+        assert sent.url.path == "/api/search"
+        assert sent.url.params.get_list("person_ids") == [
+            uuid_to_gumnut_person_id(person_uuid)
+        ]
+        assert sent.url.params["person_link"] == "face"
+        assert sent.url.params["ratings"] == "5"
 
     @pytest.mark.anyio
     async def test_converts_search_results_to_immich_assets(self, mock_current_user):
@@ -840,17 +867,9 @@ class TestSearchMetadataEnumeration:
         self, mock_current_user, dto, handler
     ):
         requests: list[httpx.Request] = []
-
-        def respond(request: httpx.Request) -> httpx.Response:
-            requests.append(request)
-            return httpx.Response(200, json={"data": [], "has_more": False})
-
         people = [uuid4(), uuid4()]
-        async with AsyncGumnut(
-            api_key="apikey_test",
-            base_url="https://api.example.test",
-            default_query={"library_id": "lib_test"},
-            http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        async with recording_gumnut_client(
+            requests, default_query={"library_id": "lib_test"}
         ) as client:
             await handler(
                 request=dto(personIds=people, isFavorite=True),
@@ -866,6 +885,7 @@ class TestSearchMetadataEnumeration:
         assert sent.url.params.get_list("person_ids") == [
             uuid_to_gumnut_person_id(person) for person in people
         ]
+        assert sent.url.params["person_link"] == "face"
         assert sent.url.params["ratings"] == "5"
 
     @pytest.mark.anyio
@@ -922,10 +942,10 @@ class TestSearchMetadataEnumeration:
         assert kwargs["state"] == "live"
         # The injected client retains its credential and chosen library scope.
         assert "library_id" not in kwargs
-        if ratings is None:
-            assert "extra_query" not in kwargs
-        else:
-            assert kwargs["extra_query"] == {"ratings": ratings}
+        expected_query = {"person_link": "face"}
+        if ratings is not None:
+            expected_query["ratings"] = ratings
+        assert kwargs["extra_query"] == expected_query
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(
@@ -2131,6 +2151,9 @@ class TestSearchRandom:
             mock_client.assets.counts.call_args.kwargs["album_id"] == expected_album_id
         )
         assert mock_client.assets.list.call_args.kwargs["album_id"] == expected_album_id
+        # No person filter, so no person_link: the Gumnut API rejects it alone.
+        assert "extra_query" not in mock_client.assets.counts.call_args.kwargs
+        assert "extra_query" not in mock_client.assets.list.call_args.kwargs
         assert len(result) == 1
 
     @pytest.mark.anyio
@@ -2151,13 +2174,12 @@ class TestSearchRandom:
         )
 
         expected_person_id = uuid_to_gumnut_person_id(person_uuid)
-        assert (
-            mock_client.assets.counts.call_args.kwargs["person_id"]
-            == expected_person_id
-        )
-        assert mock_client.assets.list.call_args.kwargs["person_ids"] == [
-            expected_person_id
-        ]
+        counts_kwargs = mock_client.assets.counts.call_args.kwargs
+        assert counts_kwargs["person_id"] == expected_person_id
+        assert counts_kwargs["extra_query"] == {"person_link": "face"}
+        list_kwargs = mock_client.assets.list.call_args.kwargs
+        assert list_kwargs["person_ids"] == [expected_person_id]
+        assert list_kwargs["extra_query"] == {"person_link": "face"}
         assert len(result) == 1
 
     @pytest.mark.anyio
