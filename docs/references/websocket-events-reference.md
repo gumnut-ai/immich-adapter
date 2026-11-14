@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-11-10
+last-updated: 2026-11-14
 ---
 
 # Immich WebSocket Events Reference
@@ -230,7 +230,12 @@ People views refresh their thumbnail cache key on receipt.
 
 ### `on_session_delete`
 
-**Trigger**: Emitted when session is invalidated (`notification.service.ts`).
+**Trigger**: Emitted when Immich invalidates a session
+(`notification.service.ts`) or when the adapter handles logout or a
+session-delete request. Logout still invokes the socket-close helper if its
+Redis delete raises; this event is a logout notification, not proof that the
+token was removed from the session store (see
+[Session revocation](../architecture/websocket-implementation.md#session-revocation)).
 **Sent to**: Session room (by sessionId)
 **Payload**: `sessionId: string`
 
@@ -246,10 +251,11 @@ People views refresh their thumbnail cache key on receipt.
 **Adapter payload**: the session's public id, the one `/api/sessions` lists,
 never its token.
 
-**Adapter timing**: Logout and session-deletion requests await
-`close_session_sockets` before returning the HTTP response. It sends this
-event and then disconnects the session's sockets; see
-[Session revocation](../architecture/websocket-implementation.md#session-revocation).
+**Adapter timing**: After the session-store delete returns, the route awaits
+`close_session_sockets` before returning; logout also invokes the helper if
+deletion raises. Event emission and socket disconnects are best-effort. See
+[Session revocation](../architecture/websocket-implementation.md#session-revocation)
+for how store errors affect token validity.
 
 ---
 

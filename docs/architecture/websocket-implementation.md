@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation"
-last-updated: 2026-11-11
+last-updated: 2026-11-14
 ---
 
 # WebSocket Implementation
@@ -69,9 +69,26 @@ Event payload and trigger details deliberately live in the [event reference](../
 
 ## Session revocation
 
-Logout, `DELETE /api/sessions` and `DELETE /api/sessions/{id}` delete the session from Redis and then call `close_session_sockets` for each deleted session. It emits `on_session_delete` first, so the web client can run its logout navigation, and then disconnects every socket in the session room. A disconnect removes the socket from all of its rooms, including the user room, so the deleted session stops receiving the user's events even if its client ignores `on_session_delete`; leaving only the session room would not.
+After a session-store delete returns, logout and the session-delete routes call
+`close_session_sockets`. It sends `on_session_delete` to the session room, then
+disconnects its sockets. A disconnect removes the socket from all of its rooms,
+including the user room, so a deleted session stops receiving the user's events
+even if its client ignores `on_session_delete`; leaving only the session room
+would not.
 
-Neither Immich client retries a server-initiated disconnect: web reconnects after the next login, and mobile builds a new socket when it next connects. A reconnect with the deleted token is rejected by the connect handler. Deleting all other sessions never targets the caller's own session, so the caller's sockets stay connected.
+The routes handle store errors differently. Logout logs a delete error but
+still calls `close_session_sockets`, clears its cookies, and returns success.
+Bulk session deletion logs a failed per-session delete and continues without
+closing that session's sockets; deleting one session propagates the store error.
+A successful logout response or socket disconnect therefore does not prove
+server-side token revocation when the store delete failed. If Redis still has
+the session record, a later socket connection with that token can be accepted.
+
+Neither Immich client retries a server-initiated disconnect: web reconnects
+after the next login, and mobile builds a new socket when it next connects. A
+reconnect with a token whose session record was deleted is rejected by the
+connect handler. Deleting all other sessions never targets the caller's own
+session, so the caller's sockets stay connected.
 
 OAuth login creates sessions without a Redis TTL, so a session does not expire on its own while a socket is connected; a session created with an expiry would need its own disconnect.
 
