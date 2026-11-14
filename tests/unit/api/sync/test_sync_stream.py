@@ -10,7 +10,11 @@ from uuid import UUID, uuid4
 import pytest
 
 from routers.api.sync import stream as stream_module
-from routers.api.sync.converters import gumnut_album_to_sync_album_user_v1
+from routers.api.sync.converters import (
+    gumnut_album_to_sync_album_user_v1,
+    gumnut_user_to_sync_auth_user_v1,
+    gumnut_user_to_sync_user_v1,
+)
 from routers.api.sync.fk_integrity import SyncStreamStats
 from routers.api.sync.routes import get_sync_stream
 from routers.api.sync.stream import (
@@ -182,6 +186,35 @@ class TestGenerateSyncStream:
     # -------------------------------------------------------------------------
     # User entity tests (special cases - not from events API)
     # -------------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        ("first_name", "last_name", "email", "expected_name"),
+        [
+            ("Example", "User", "user@example.com", "Example User"),
+            ("Example", None, "user@example.com", "Example"),
+            (None, "User", "user@example.com", "User"),
+            (None, None, "user@example.com", "user@example.com"),
+            (None, None, None, "Unknown User"),
+            ("", "", "", "Unknown User"),
+        ],
+    )
+    def test_sync_user_converters_share_name_fallbacks(
+        self,
+        first_name: str | None,
+        last_name: str | None,
+        email: str | None,
+        expected_name: str,
+    ) -> None:
+        user = create_mock_user(datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC))
+        user.first_name = first_name
+        user.last_name = last_name
+        user.email = email
+
+        auth_user = gumnut_user_to_sync_auth_user_v1(user)
+        sync_user = gumnut_user_to_sync_user_v1(user)
+
+        assert auth_user.name == expected_name
+        assert sync_user.name == expected_name
 
     @pytest.mark.anyio
     async def test_streams_auth_user_when_requested(self):
