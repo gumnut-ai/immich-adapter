@@ -74,6 +74,12 @@ def _format_exposure_time(exposure_time: float | None) -> str | None:
     return f"1/{denominator}"
 
 
+def _sync_user_name(user: UserResponse) -> str:
+    """Build the name shared by the sync user payloads."""
+    name_parts = [part for part in (user.first_name, user.last_name) if part]
+    return " ".join(name_parts) or user.email or "Unknown User"
+
+
 def gumnut_user_to_sync_auth_user_v1(user: UserResponse) -> SyncAuthUserV1:
     """
     Convert Gumnut UserResponse to Immich SyncAuthUserV1 format.
@@ -84,13 +90,7 @@ def gumnut_user_to_sync_auth_user_v1(user: UserResponse) -> SyncAuthUserV1:
     Returns:
         SyncAuthUserV1 for sync stream
     """
-    # Construct full name from first and last name
-    name_parts = []
-    if user.first_name:
-        name_parts.append(user.first_name)
-    if user.last_name:
-        name_parts.append(user.last_name)
-    full_name = " ".join(name_parts) if name_parts else user.email or "Unknown User"
+    full_name = _sync_user_name(user)
 
     # Same per-user storage caps as GET/PUT /api/users/me, kept consistent across
     # both quota surfaces. quotaUsageInBytes is a required int here, so a missing
@@ -124,13 +124,7 @@ def gumnut_user_to_sync_user_v1(user: UserResponse) -> SyncUserV1:
     Returns:
         SyncUserV1 for sync stream
     """
-    # Construct full name from first and last name
-    name_parts = []
-    if user.first_name:
-        name_parts.append(user.first_name)
-    if user.last_name:
-        name_parts.append(user.last_name)
-    full_name = " ".join(name_parts) if name_parts else user.email or "Unknown User"
+    full_name = _sync_user_name(user)
 
     return SyncUserV1(
         id=safe_uuid_from_user_id(user.id),
