@@ -44,7 +44,6 @@ JANUARY_2024_DATE_RANGE = {
     "local_datetime_after": "2023-12-31T23:59:59.999999",
     "local_datetime_before": "2024-02-01T00:00:00",
 }
-# A person-filtered read asks the Gumnut API for face links only.
 
 
 def _make_data(time_bucket: datetime, count: int) -> Mock:
