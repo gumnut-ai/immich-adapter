@@ -1120,8 +1120,8 @@ class TestGetPersonStatistics:
         gumnut_person_id = uuid_to_gumnut_person_id(sample_uuid)
         mock_client.people.retrieve.assert_awaited_once_with(gumnut_person_id)
         for call in mock_client.assets.counts.await_args_list:
-            assert call.kwargs["person_id"] == gumnut_person_id
-            assert call.kwargs["extra_query"] == {"person_link": "face"}
+            assert call.kwargs["person_ids"] == [gumnut_person_id]
+            assert call.kwargs["person_link"] == "face"
 
     @pytest.mark.anyio
     async def test_person_without_face_linked_photos_reports_zero(
@@ -1170,9 +1170,9 @@ class TestGetPersonStatistics:
         assert result.assets == 7
         counts_request = requests[-1]
         assert counts_request.url.path == "/api/assets/counts"
-        assert counts_request.url.params["person_id"] == uuid_to_gumnut_person_id(
-            sample_uuid
-        )
+        assert counts_request.url.params.get_list("person_ids") == [
+            uuid_to_gumnut_person_id(sample_uuid)
+        ]
         assert counts_request.url.params["person_link"] == "face"
 
     @pytest.mark.anyio
