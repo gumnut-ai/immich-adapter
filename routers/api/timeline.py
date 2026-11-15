@@ -30,7 +30,6 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_person_id,
 )
-from routers.utils.person_filter import FACE_PERSON_LINK_QUERY
 from routers.utils.rating import RatingFilter, rating_extra_query, rating_filter_values
 from routers.utils.stack_conversion import TimelineStacks, resolve_timeline_stacks
 
@@ -56,10 +55,9 @@ async def fetch_asset_counts(
     if album_id is not None:
         kwargs["album_id"] = album_id
     if person_id is not None:
-        kwargs["person_id"] = person_id
-    extra_query = rating_extra_query(
-        ratings, FACE_PERSON_LINK_QUERY if person_id is not None else None
-    )
+        kwargs["person_ids"] = [person_id]
+        kwargs["person_link"] = "face"
+    extra_query = rating_extra_query(ratings)
     if extra_query is not None:
         kwargs["extra_query"] = extra_query
     if state is not None:
@@ -203,7 +201,7 @@ async def get_time_bucket(
         list_kwargs["album_id"] = uuid_to_gumnut_album_id(albumId)
     elif personId:
         list_kwargs["person_ids"] = [uuid_to_gumnut_person_id(personId)]
-        base_query.update(FACE_PERSON_LINK_QUERY)
+        list_kwargs["person_link"] = "face"
     list_kwargs["extra_query"] = rating_extra_query(
         rating_filter_values(is_favorite=isFavorite), base_query
     )

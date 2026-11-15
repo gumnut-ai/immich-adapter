@@ -501,7 +501,8 @@ class TestSearchMetadata:
 
         call_kwargs = mock_client.assets.list.call_args.kwargs
         assert call_kwargs["person_ids"] == [gumnut_person_id]
-        assert call_kwargs["extra_query"] == {"person_link": "face"}
+        assert call_kwargs["person_link"] == "face"
+        assert "extra_query" not in call_kwargs
 
     @pytest.mark.anyio
     async def test_text_search_with_people_sends_face_person_link(
@@ -936,16 +937,17 @@ class TestSearchMetadataEnumeration:
         client.search.search.assert_not_called()
         kwargs = client.assets.list.call_args.kwargs
         assert kwargs["person_ids"] == [uuid_to_gumnut_person_id(p) for p in people]
+        assert kwargs["person_link"] == "face"
         assert kwargs["local_datetime_after"] is after
         assert kwargs["local_datetime_before"] is before
         assert kwargs["include"] == ASSET_INCLUDE
         assert kwargs["state"] == "live"
         # The injected client retains its credential and chosen library scope.
         assert "library_id" not in kwargs
-        expected_query = {"person_link": "face"}
         if ratings is not None:
-            expected_query["ratings"] = ratings
-        assert kwargs["extra_query"] == expected_query
+            assert kwargs["extra_query"] == {"ratings": ratings}
+        else:
+            assert "extra_query" not in kwargs
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(
@@ -2152,6 +2154,8 @@ class TestSearchRandom:
         )
         assert mock_client.assets.list.call_args.kwargs["album_id"] == expected_album_id
         # No person filter, so no person_link: the Gumnut API rejects it alone.
+        assert "person_link" not in mock_client.assets.counts.call_args.kwargs
+        assert "person_link" not in mock_client.assets.list.call_args.kwargs
         assert "extra_query" not in mock_client.assets.counts.call_args.kwargs
         assert "extra_query" not in mock_client.assets.list.call_args.kwargs
         assert len(result) == 1
@@ -2175,11 +2179,13 @@ class TestSearchRandom:
 
         expected_person_id = uuid_to_gumnut_person_id(person_uuid)
         counts_kwargs = mock_client.assets.counts.call_args.kwargs
-        assert counts_kwargs["person_id"] == expected_person_id
-        assert counts_kwargs["extra_query"] == {"person_link": "face"}
+        assert counts_kwargs["person_ids"] == [expected_person_id]
+        assert counts_kwargs["person_link"] == "face"
+        assert "extra_query" not in counts_kwargs
         list_kwargs = mock_client.assets.list.call_args.kwargs
         assert list_kwargs["person_ids"] == [expected_person_id]
-        assert list_kwargs["extra_query"] == {"person_link": "face"}
+        assert list_kwargs["person_link"] == "face"
+        assert "extra_query" not in list_kwargs
         assert len(result) == 1
 
     @pytest.mark.anyio

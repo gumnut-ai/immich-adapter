@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-11-13
+last-updated: 2026-11-15
 ---
 
 # Immich Adapter Architecture
@@ -367,8 +367,8 @@ only as a body. Immich models people through faces, and its person-page actions
 (feature photo, reassign, move to a new person) need the person's face on the
 photo. So every person-filtered asset read the adapter makes (timeline counts
 and buckets, the person's photo count, search, filter-only listings, and random
-samples) sends `person_link=face`, and only alongside a person filter, which
-the API requires. `routers/utils/person_filter.py` owns the query fragment.
+samples) passes the SDK's typed `person_link="face"` argument alongside the
+required `person_ids` filter.
 The people list still sorts by the person's `asset_count`, which includes body
 links: a faces-only sort key would cost a counts call per person.
 

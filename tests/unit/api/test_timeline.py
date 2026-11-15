@@ -44,8 +44,6 @@ JANUARY_2024_DATE_RANGE = {
     "local_datetime_after": "2023-12-31T23:59:59.999999",
     "local_datetime_before": "2024-02-01T00:00:00",
 }
-# A person-filtered read asks for face links only; see routers/utils/person_filter.py.
-JANUARY_2024_FACE_PERSON_QUERY = {**JANUARY_2024_DATE_RANGE, "person_link": "face"}
 
 
 def _make_data(time_bucket: datetime, count: int) -> Mock:
@@ -252,19 +250,19 @@ class TestFetchAssetCounts:
 
     @pytest.mark.anyio
     async def test_with_person_id(self):
-        """person_id is passed through as a kwarg."""
+        """Person counts use the one-element person_ids API filter."""
         mock_client = Mock()
         mock_client.assets.counts = AsyncMock(return_value=_make_counts_response([]))
 
         await fetch_asset_counts(mock_client, person_id="person-456")
 
         kwargs = mock_client.assets.counts.call_args[1]
-        assert kwargs["person_id"] == "person-456"
-        assert kwargs["extra_query"] == {"person_link": "face"}
+        assert kwargs["person_ids"] == ["person-456"]
+        assert kwargs["person_link"] == "face"
 
     @pytest.mark.anyio
     async def test_person_link_merges_with_ratings_on_every_page(self):
-        """person_link rides with the rating filter and survives pagination."""
+        """Face-only person filtering and ratings survive pagination."""
         mock_client = Mock()
         mock_client.assets.counts = AsyncMock(
             side_effect=[
@@ -281,10 +279,9 @@ class TestFetchAssetCounts:
 
         assert mock_client.assets.counts.call_count == 2
         for call in mock_client.assets.counts.call_args_list:
-            assert call.kwargs["extra_query"] == {
-                "person_link": "face",
-                "ratings": "5",
-            }
+            assert call.kwargs["person_ids"] == ["person-456"]
+            assert call.kwargs["person_link"] == "face"
+            assert call.kwargs["extra_query"] == {"ratings": "5"}
 
     @pytest.mark.anyio
     async def test_without_person_sends_no_person_link(self):
@@ -294,6 +291,7 @@ class TestFetchAssetCounts:
 
         await fetch_asset_counts(mock_client, album_id="album-123")
 
+        assert "person_link" not in mock_client.assets.counts.call_args.kwargs
         assert "extra_query" not in mock_client.assets.counts.call_args.kwargs
 
     @pytest.mark.anyio
@@ -362,8 +360,8 @@ class TestGetTimeBuckets:
         assert result[0].timeBucket == "2024-01-01"
         assert result[0].count == 1
         kwargs = mock_client.assets.counts.call_args[1]
-        assert kwargs["person_id"] == uuid_to_gumnut_person_id(sample_uuid)
-        assert kwargs["extra_query"] == {"person_link": "face"}
+        assert kwargs["person_ids"] == [uuid_to_gumnut_person_id(sample_uuid)]
+        assert kwargs["person_link"] == "face"
 
     @pytest.mark.anyio
     async def test_get_time_buckets_ascending_order(self):
@@ -528,7 +526,9 @@ class TestPersonLinkOnTheWire:
         assert len(requests) == 1
         sent = requests[0]
         assert sent.url.path == "/api/assets/counts"
-        assert sent.url.params["person_id"] == uuid_to_gumnut_person_id(person_id)
+        assert sent.url.params.get_list("person_ids") == [
+            uuid_to_gumnut_person_id(person_id)
+        ]
         assert sent.url.params["person_link"] == "face"
 
     @pytest.mark.anyio
@@ -879,8 +879,9 @@ class TestGetTimeBucket:
             assert len(result["id"]) == 1
             mock_client.assets.list.assert_called_once_with(
                 person_ids=[uuid_to_gumnut_person_id(sample_uuid)],
+                person_link="face",
                 include=ASSET_INCLUDE_METADATA_ONLY,
-                extra_query=JANUARY_2024_FACE_PERSON_QUERY,
+                extra_query=JANUARY_2024_DATE_RANGE,
             )
 
     @pytest.mark.anyio
@@ -1846,8 +1847,9 @@ class TestTimeBucketStacks:
         bucket_read = client.assets.list.call_args_list[0]
         assert bucket_read.kwargs == {
             "person_ids": [uuid_to_gumnut_person_id(person_id)],
+            "person_link": "face",
             "include": ASSET_INCLUDE_METADATA_ONLY,
-            "extra_query": JANUARY_2024_FACE_PERSON_QUERY,
+            "extra_query": JANUARY_2024_DATE_RANGE,
         }
 
     @pytest.mark.anyio

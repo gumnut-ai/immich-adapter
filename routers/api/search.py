@@ -46,7 +46,6 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_person_id,
 )
 from routers.utils.person_conversion import convert_gumnut_person_to_immich
-from routers.utils.person_filter import FACE_PERSON_LINK_QUERY
 from routers.utils.rating import RatingFilter, rating_extra_query, rating_filter_values
 
 logger = logging.getLogger(__name__)
@@ -463,6 +462,7 @@ async def _list_asset_page(
         list_kwargs["person_ids"] = [
             uuid_to_gumnut_person_id(pid) for pid in request.personIds
         ]
+        list_kwargs["person_link"] = "face"
     # Preserve the existing capture-date translation, including its timezone
     # behavior; see Route and DTO Contracts, "Immich web today wire format".
     if request.takenAfter is not None:
@@ -474,8 +474,7 @@ async def _list_asset_page(
             rating=request.rating,
             rating_provided="rating" in request.model_fields_set,
             is_favorite=request.isFavorite,
-        ),
-        FACE_PERSON_LINK_QUERY if request.personIds else None,
+        )
     )
     if extra_query is not None:
         list_kwargs["extra_query"] = extra_query
@@ -565,13 +564,14 @@ async def search_assets(
         "person_ids": person_ids,
         "include": ASSET_INCLUDE,
     }
+    if person_ids:
+        search_kwargs["person_link"] = "face"
     extra_query = rating_extra_query(
         rating_filter_values(
             rating=request.rating,
             rating_provided="rating" in request.model_fields_set,
             is_favorite=request.isFavorite,
-        ),
-        FACE_PERSON_LINK_QUERY if person_ids else None,
+        )
     )
     if extra_query is not None:
         search_kwargs["extra_query"] = extra_query
@@ -704,9 +704,8 @@ async def _fetch_month_assets_at_offsets(
         list_kwargs["album_id"] = album_id
     if person_id is not None:
         list_kwargs["person_ids"] = [person_id]
-    extra_query = rating_extra_query(
-        ratings, FACE_PERSON_LINK_QUERY if person_id is not None else None
-    )
+        list_kwargs["person_link"] = "face"
+    extra_query = rating_extra_query(ratings)
     if extra_query is not None:
         list_kwargs["extra_query"] = extra_query
 
