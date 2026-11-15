@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-11-14
+last-updated: 2026-11-15
 ---
 
 # Immich WebSocket Events Reference
@@ -25,7 +25,7 @@ Client columns report registered handlers in both pinned upstream clients
 | `on_asset_stack_update` | Stack created/updated/deleted | None | Declared, not subscribed | Triggers sync |
 | `on_asset_hidden` | Upstream only: asset visibility changed | `assetId: string` | Declared, not subscribed | Listener |
 | `on_person_thumbnail` | Upstream only: person thumbnail generated | `personId: string` | Global bridge + component listeners | Not used |
-| `on_session_delete` | Session invalidated (upstream) / session deleted (adapter) | `sessionId: string` | Global (triggers logout) | Not used |
+| `on_session_delete` | Session invalidated (upstream) / session deletion or best-effort logout notification (adapter) | `sessionId: string` | Global (triggers logout) | Not used |
 | `on_notification` | Upstream only: in-app notification created | `NotificationDto` | Global (refreshes panel) | Not used |
 | `on_config_update` | Upstream only: system config changed | None | Declared, not subscribed | Listener |
 | `on_new_release` | Upstream only: new version available | `ReleaseEventV1` | Global listener | Listener |
