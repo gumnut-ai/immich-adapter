@@ -1,9 +1,9 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-11-02T15:20:59.311396702Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
@@ -911,15 +911,15 @@ wheels = [
 
 [[package]]
 name = "python-socketio"
-version = "5.18.0"
+version = "5.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bidict" },
     { name = "python-engineio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/28/83/1c6865ac1fc15dc1315c34e57a0697045deb342ca450c96e499df9522336/python_socketio-5.18.0.tar.gz", hash = "sha256:81ec0fbc34b82009272834145a8fab82ccc36eb057eb2c3798dfe253fa47ed72", size = 131736, upload-time = "2026-11-01T20:39:06.36Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/a0/b3c6cfac960bec64ad52b83e7baed825ce256f8506b343aed10d2dc5f747/python_socketio-5.17.1.tar.gz", hash = "sha256:2a3183d7172e5ff772b9c24ef94f1fdf84a09b746925c997b7687ae8017f7247", size = 131117, upload-time = "2026-10-30T11:42:10.519Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/80/bc/d9028117da0c952e61a0dda8f3deb028bcb50563540b5f13d408b58628c3/python_socketio-5.18.0-py3-none-any.whl", hash = "sha256:b443bce375a9c6a1071b298ef85ddf11bcee102b3823d587315635a87db3a14f", size = 82977, upload-time = "2026-11-01T20:39:04.721Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/bf/ea4cc7d05f8a1c6abf579f510cc17c670456e6e101d7af26b7d60c86e37d/python_socketio-5.17.1-py3-none-any.whl", hash = "sha256:b9a2cc5d4f7155c107d60e6efe6d3f3000197f44b979ac4657641e8a211634fe", size = 82553, upload-time = "2026-10-30T11:42:09.093Z" },
 ]
 
 [[package]]
