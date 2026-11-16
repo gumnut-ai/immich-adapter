@@ -7,7 +7,9 @@
   "enabledManagers": ["github-actions", "dockerfile"],
   "minimumReleaseAge": "14 days",
   "schedule": ["before 6am on monday"],
-  "dependencyDashboard": true,
+  "dependencyDashboard": {
+    "enabled": true
+  },
   "packageRules": [
     {
       "matchManagers": ["github-actions"],
