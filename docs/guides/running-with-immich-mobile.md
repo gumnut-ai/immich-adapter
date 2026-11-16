@@ -1,6 +1,6 @@
 ---
 title: "Running with Immich Mobile"
-last-updated: 2026-10-28
+last-updated: 2026-11-16
 ---
 
 # Running with Immich Mobile
@@ -143,7 +143,10 @@ listener; they do not provide an OAuth traffic-capture workflow.
 * Check "Enable Reverse Proxy Tool" if not already checked
 * Click "+" in the lower left to create a new reverse proxy
 * Specify a name, a local port, and the adapter's host and port
-* If the adapter uses HTTPS, check "Force Using SSL when connecting to Remote Port"
+* If the adapter uses HTTPS on a remote port other than `443`, enable
+  "Force Using SSL when connecting to Remote Port". This option is available
+  in Proxyman 5.17.0 or later. Proxyman uses TLS automatically when the remote
+  port is `443`.
 * Enable "Preserve Host in Header" so the adapter receives the device-facing host and port
 * Click "Add" to create and start the reverse proxy
 
