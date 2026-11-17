@@ -34,16 +34,14 @@ from routers.immich_models import (
     UserPreferencesResponseDto,
     UserPreferencesUpdateDto,
     UserResponseDto,
-    UserStatus,
     UserUpdateMeDto,
 )
 from routers.utils.current_user import (
     get_current_user_admin,
     get_current_user_id,
-    map_user_quota,
+    map_user_admin_response,
 )
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -93,36 +91,7 @@ async def update_my_user(
     """
     # Re-fetch current user to ensure we have latest data
     user = await client.users.me()
-    first_name = user.first_name or ""
-    last_name = user.last_name or ""
-    full_name = f"{first_name} {last_name}".strip() or "User"
-    user_uuid = safe_uuid_from_user_id(user.id)
-    quota = map_user_quota(user)
-
-    return UserAdminResponseDto(
-        id=user_uuid,
-        clusterGroupId=user_uuid,
-        email=user.email or "",
-        name=full_name,
-        isAdmin=True,
-        createdAt=user.created_at,
-        updatedAt=user.updated_at,
-        avatarColor=UserAvatarColor.primary,
-        profileImagePath="",
-        shouldChangePassword=False,
-        status=UserStatus.active if user.is_active else UserStatus.deleted,
-        storageLabel="admin",
-        quotaSizeInBytes=quota.size_bytes,
-        quotaUsageInBytes=quota.usage_bytes,
-        deletedAt=None,
-        oauthId="",
-        profileChangedAt=user.updated_at,
-        license=UserLicense(
-            activatedAt=datetime.now(tz=UTC),
-            activationKey=str(uuid4()),
-            licenseKey=STUB_LICENSE_KEY,
-        ),
-    )
+    return map_user_admin_response(user, is_admin=True)
 
 
 @router.get("/me/license")
