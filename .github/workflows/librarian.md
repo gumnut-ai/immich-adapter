@@ -196,7 +196,7 @@ steps:
       echo "version=$version" >> "$GITHUB_OUTPUT"
   - name: Install pinned uv and configure local cache
     id: uv_setup
-    uses: astral-sh/setup-uv@v10.2.0
+    uses: astral-sh/setup-uv@v10.3.3
     with:
       version: ${{ steps.uv-version.outputs.version }}
       # Agent-writable dependencies must not be persisted into future jobs.

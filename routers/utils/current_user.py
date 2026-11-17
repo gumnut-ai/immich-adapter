@@ -58,6 +58,46 @@ def map_user_quota(user: UserResponse) -> ImmichUserQuota:
     )
 
 
+def map_user_admin_response(
+    user: UserResponse, *, is_admin: bool
+) -> UserAdminResponseDto:
+    """Map a Gumnut user to Immich's admin user response DTO."""
+    # Gumnut names are optional, including for OAuth-created users.
+    first_name = user.first_name or ""
+    last_name = user.last_name or ""
+    full_name = f"{first_name} {last_name}".strip() or "User"
+
+    user_uuid = safe_uuid_from_user_id(user.id)
+    quota = map_user_quota(user)
+
+    return UserAdminResponseDto(
+        id=user_uuid,
+        # Gumnut has no cluster groups; the user UUID supplies the required,
+        # stable per-user value.
+        clusterGroupId=user_uuid,
+        email=user.email or "",
+        name=full_name,
+        isAdmin=is_admin,
+        createdAt=user.created_at,
+        updatedAt=user.updated_at,
+        avatarColor=UserAvatarColor.primary,
+        profileImagePath="",
+        shouldChangePassword=False,
+        status=UserStatus.active if user.is_active else UserStatus.deleted,
+        storageLabel="admin",
+        quotaSizeInBytes=quota.size_bytes,
+        quotaUsageInBytes=quota.usage_bytes,
+        deletedAt=None,
+        oauthId="",
+        profileChangedAt=user.updated_at,
+        license=UserLicense(
+            activatedAt=datetime.now(tz=UTC),
+            activationKey=str(uuid4()),
+            licenseKey=STUB_LICENSE_KEY,
+        ),
+    )
+
+
 async def get_current_user_admin(
     request: Request,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
@@ -86,46 +126,8 @@ async def get_current_user_admin(
     # requests are already attributed; re-setting the same id is harmless.
     sentry_sdk.set_user({"id": user.id})
 
-    # Map Gumnut UserResponse to Immich UserAdminResponseDto
-    # Combine first_name and last_name into Immich's single "name" field
-    # Need to include fall back to "User" as names are not required in Gumnut or from OAuth sources
-    first_name = user.first_name or ""
-    last_name = user.last_name or ""
-    full_name = f"{first_name} {last_name}".strip() or "User"
-
-    # Convert Gumnut user ID to UUID
-    user_uuid = safe_uuid_from_user_id(user.id)
-
-    # Storage cap (max) and derived usage from the Gumnut API, mapped to Immich quota.
-    quota = map_user_quota(user)
-
-    user_admin_dto = UserAdminResponseDto(
-        id=user_uuid,
-        # Gumnut has no cluster groups; the user UUID supplies the required,
-        # stable per-user value.
-        clusterGroupId=user_uuid,
-        email=user.email or "",
-        name=full_name,
-        isAdmin=False,  # Always False - no need to show Immich admin controls
-        createdAt=user.created_at,
-        updatedAt=user.updated_at,
-        # Immich-specific fields with sensible defaults
-        avatarColor=UserAvatarColor.primary,
-        profileImagePath="",
-        shouldChangePassword=False,
-        status=UserStatus.active if user.is_active else UserStatus.deleted,
-        storageLabel="admin",
-        quotaSizeInBytes=quota.size_bytes,
-        quotaUsageInBytes=quota.usage_bytes,
-        deletedAt=None,
-        oauthId="",
-        profileChangedAt=user.updated_at,
-        license=UserLicense(
-            activatedAt=datetime.now(tz=UTC),
-            activationKey=str(uuid4()),
-            licenseKey=STUB_LICENSE_KEY,
-        ),
-    )
+    # The current-user endpoint does not expose Immich admin controls.
+    user_admin_dto = map_user_admin_response(user, is_admin=False)
 
     # Cache in request state
     request.state.current_user_admin = user_admin_dto
