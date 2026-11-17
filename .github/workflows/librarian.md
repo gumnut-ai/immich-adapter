@@ -55,7 +55,7 @@ models:
             cache_write: "1.25e-7"
 runtimes:
   node:
-    version: "24.21.0"
+    version: "24.22.3"
   python:
     version: "3.14"
 permissions:

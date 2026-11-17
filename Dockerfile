@@ -24,10 +24,10 @@ FROM ghcr.io/immich-app/immich-server:${IMMICH_VERSION} AS immich-source
 # ============================================================================
 # Stage 2: Build the immich-adapter application
 # ============================================================================
-FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS builder
+FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS builder
 
 # Copy uv from official image (pinned by digest for reproducible builds)
-COPY --from=ghcr.io/astral-sh/uv:0.11.3@sha256:90bbb3c16635e9627f49eec6539f956d70746c409209041800a0280b93152823 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 /uv /usr/local/bin/uv
 
 # Set working directory
 WORKDIR /app
@@ -43,7 +43,7 @@ RUN uv sync --frozen --no-dev
 # ============================================================================
 # Stage 3: Runtime image (final, smallest image)
 # ============================================================================
-FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
+FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
 
 # Propagate build args for labels
 ARG GIT_COMMIT
