@@ -168,6 +168,7 @@ class TestConnectHandler:
         with (
             patch.object(sio, "enter_room", new_callable=AsyncMock) as mock_enter,
             patch.object(sio, "emit", new_callable=AsyncMock) as mock_emit,
+            patch.object(sio, "get_environ", return_value={}),
         ):
             yield {"enter_room": mock_enter, "emit": mock_emit}
 

@@ -28,8 +28,33 @@ from services.session_store import (
 
 logger = logging.getLogger(__name__)
 
+# Maps socket ID -> user ID for disconnect cleanup and pending revocation.
+_sid_to_user: dict[str, str] = {}
+
+
+class _SessionSocketManager(socketio.AsyncManager):
+    async def connect(self, sid: str, namespace: str) -> str | None:
+        server = self.server
+        assert server is not None
+        # Socket.IO sends CONNECT before finishing the pending registration.
+        # Engine.IO can discover that the transport has dropped during that send.
+        if server.get_environ(sid, namespace) is None:
+            _sid_to_user.pop(sid, None)
+            await self.disconnect(sid, namespace)
+            return None
+
+        connected_sid = await super().connect(sid, namespace)
+        if sid not in _sid_to_user:
+            # Revocation already removed the socket from its broadcast rooms.
+            # Complete the wire disconnect now that Socket.IO accepts it.
+            await server.disconnect(sid, namespace=namespace)
+            return None
+        return connected_sid
+
+
 sio = socketio.AsyncServer(
     async_mode="asgi",
+    client_manager=_SessionSocketManager(),
     cors_allowed_origins="*",
     engineio_version=4,
     logger=logging.getLogger("socketio"),  # type: ignore
@@ -94,10 +119,6 @@ class AssetEditReadyV2Payload(BaseModel):
 
     asset: SyncAssetV2
     edit: list[SyncAssetEditV1]
-
-
-# Maps socket ID -> user_id for disconnect cleanup
-_sid_to_user: dict[str, str] = {}
 
 
 def _session_room(session_token: str) -> str:
@@ -165,6 +186,11 @@ async def _load_session(sid: str, session_token: str) -> Session | None:
     return session
 
 
+def _connect_is_live(sid: str) -> bool:
+    """A pending socket must still have a transport and belong to its session."""
+    return sid in _sid_to_user and sio.get_environ(sid) is not None
+
+
 @sio.event
 async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
     """
@@ -187,7 +213,7 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
         return False  # Reject connection
 
     session = await _load_session(sid, session_token)
-    if not session:
+    if not session or sio.get_environ(sid) is None:
         return False  # Reject connection
 
     # Join user room and session room, and track session
@@ -199,9 +225,9 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
     # The session may have been deleted after the lookup above, and its
     # sockets closed before this one joined the session room. Reading it again
     # after joining means a deletion either finds this socket in the room or
-    # is seen here. The socket is already tracked, so a disconnect during this
-    # read clears it.
-    if not await _load_session(sid, session_token):
+    # is seen here. Socket.IO 5.18 does not call disconnect handlers for pending
+    # sockets, so check the transport and revocation marker before continuing.
+    if not await _load_session(sid, session_token) or not _connect_is_live(sid):
         _sid_to_user.pop(sid, None)
         return False  # Rejecting also removes the socket from its rooms
 
@@ -233,6 +259,10 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
         logger.warning(
             "Error sending version info", extra={"sid": sid, "error": str(e)}
         )
+
+    if not _connect_is_live(sid):
+        _sid_to_user.pop(sid, None)
+        return False
 
 
 @sio.event
@@ -373,7 +403,7 @@ async def close_session_sockets(session_token: str) -> None:
     """End a deleted session's Socket.IO connections.
 
     Emits ``on_session_delete`` to the session's room, carrying the session's
-    public id (never its token), then disconnects every socket in the room.
+    public id (never its token), then closes every socket in the room.
     Disconnecting, rather than leaving the session room, is what also removes
     a socket from the user room. Best-effort: a failed disconnect is logged
     and the rest still run. See docs/architecture/websocket-implementation.md
@@ -389,7 +419,15 @@ async def close_session_sockets(session_token: str) -> None:
     sids = [sid for sid, _ in sio.manager.get_participants("/", room)]
     for sid in sids:
         try:
-            await sio.disconnect(sid)
+            if sio.manager.is_pre_connected(sid, "/"):
+                # Pending sockets cannot be disconnected by Socket.IO yet.
+                # Evict them from broadcasts and mark the handshake for refusal.
+                user_id = _sid_to_user.pop(sid, None)
+                if user_id is not None:
+                    await sio.leave_room(sid, user_id)
+                await sio.leave_room(sid, room)
+            else:
+                await sio.disconnect(sid)
         except Exception:
             logger.warning(
                 "Failed to disconnect a deleted session's socket",
