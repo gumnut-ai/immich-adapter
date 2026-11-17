@@ -210,7 +210,7 @@ steps:
       fi
       echo "version=$version" >> "$GITHUB_OUTPUT"
   - name: Install pinned uv
-    uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+    uses: astral-sh/setup-uv@v10.3.3
     with:
       version: ${{ steps.uv-version.outputs.version }}
       enable-cache: true
