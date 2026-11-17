@@ -92,9 +92,16 @@ session, so the caller's sockets stay connected.
 
 OAuth login creates sessions without a Redis TTL, so a session does not expire on its own while a socket is connected; a session created with an expiry would need its own disconnect.
 
-The connect handler reads the session again after joining its rooms, so a socket that connects while its session is being deleted is either closed with the session room or refused.
+The connect handler reads the session again after joining its rooms, so a socket
+that connects while its session is being deleted is either closed with the
+session room or refused. Socket.IO 5.18 treats these handshakes as pending until
+authentication finishes. Revoking a pending socket immediately removes it from
+the user and session rooms and marks the handshake for refusal. If the
+transport drops during the handshake, the adapter clears its tracking and
+Socket.IO room membership.
 
-The server uses python-socketio's default in-memory client manager, so revocation, like every emit, reaches only sockets connected to the process that handled the request, not sockets connected to another instance of the service.
+The server uses an in-memory client manager, so revocation and emits reach only
+sockets on the process that handled the request.
 
 ## Delivery and failure semantics
 

@@ -145,6 +145,7 @@ async def test_websocket_session_room_logs_carry_no_token(telemetry, redis):
         ),
         patch.object(sio.manager, "enter_room", AsyncMock()) as enter_room,
         patch.object(sio.manager, "emit", AsyncMock()) as manager_emit,
+        patch.object(sio, "get_environ", return_value=environ),
     ):
         assert await connect("sid-1", environ) is not False
         await emit_session_event(WebSocketEvent.SESSION_DELETE, token, token)

@@ -165,6 +165,7 @@ async def test_listed_session_ids_do_not_open_a_websocket(client, store):
     with (
         patch.object(sio, "enter_room", new_callable=AsyncMock),
         patch.object(sio, "emit", new_callable=AsyncMock),
+        patch.object(sio, "get_environ", return_value={}),
         patch("services.websockets.get_session_store", AsyncMock(return_value=store)),
     ):
         listed_id_result = await connect(
@@ -207,6 +208,7 @@ async def test_deleting_a_listed_id_revokes_that_session(client, store):
     with (
         patch.object(sio, "enter_room", side_effect=enter_room),
         patch.object(sio, "emit", new_callable=AsyncMock) as emit,
+        patch.object(sio, "get_environ", return_value={}),
         patch("services.websockets.get_session_store", AsyncMock(return_value=store)),
     ):
         # The other device's websocket joins its session room.
@@ -586,3 +588,60 @@ async def test_a_socket_that_drops_while_its_session_is_read_again_is_untracked(
 
     assert reads == 2
     assert len(_sid_to_user) == 1  # only the caller's socket is tracked
+
+
+@pytest.mark.anyio
+async def test_a_session_revoked_while_its_socket_sends_version_is_refused(
+    client, store, wire
+):
+    mine = await _login(store)
+    other = await _login(store)
+    await wire.open("mine", mine)
+    real_emit = sio.emit
+    revocation_status = None
+    user_events_during_handshake = None
+
+    async def revoke_before_version(event: str, *args: Any, **kwargs: Any) -> None:
+        nonlocal revocation_status, user_events_during_handshake
+        if event == WebSocketEvent.SERVER_VERSION.value:
+            response = await client.delete(
+                f"/api/sessions/{public_session_id(other)}", headers=_bearer(mine)
+            )
+            revocation_status = response.status_code
+            wire.mark()
+            await _emit_user_event()
+            user_events_during_handshake = (wire.events("mine"), wire.events("other"))
+        await real_emit(event, *args, **kwargs)
+
+    with patch.object(sio, "emit", side_effect=revoke_before_version):
+        assert await wire.connect("other", other) == packet.CONNECT_ERROR
+
+    assert revocation_status == 204
+    assert user_events_during_handshake == ([TRASH], [])
+    assert len(_sid_to_user) == 1
+    assert sio.manager.sid_from_eio_sid("other", "/") is None
+    await _assert_user_events_reach(wire, "mine")
+    assert wire.events("other") == []
+
+
+@pytest.mark.anyio
+async def test_a_transport_that_drops_during_the_connect_reply_is_untracked(
+    store, wire
+):
+    mine = await _login(store)
+    other = await _login(store)
+    await wire.open("mine", mine)
+
+    async def drop_during_connect_reply(eio_sid: str, data: Any) -> None:
+        if packet.Packet(encoded_packet=data).packet_type == packet.CONNECT:
+            await sio._handle_eio_disconnect(eio_sid, sio.reason.PING_TIMEOUT)
+            return
+        await wire.send(eio_sid, data)
+
+    with patch.object(sio.eio, "send", side_effect=drop_during_connect_reply):
+        await wire.connect("other", other)
+
+    assert len(_sid_to_user) == 1
+    assert sio.manager.sid_from_eio_sid("other", "/") is None
+    await _assert_user_events_reach(wire, "mine")
+    assert wire.events("other") == []
