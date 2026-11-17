@@ -211,6 +211,7 @@ class TestUpdateMyUser:
         result = await update_my_user(request=UserUpdateMeDto(), client=mock_client)
 
         assert isinstance(result, UserAdminResponseDto)
+        assert result.isAdmin is True
         assert result.quotaSizeInBytes == 100 * 1000**3
         assert result.quotaUsageInBytes == 5 * 1000**3
 
