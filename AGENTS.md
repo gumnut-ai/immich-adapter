@@ -11,7 +11,8 @@ Separately — and this one *is* about confidentiality — captured example data
 # uv setup for agents
 
 Before running Python commands, use the version in the repository-root `.uv-version`.
-Keep this pin coordinated with intentional uv updates in `Dockerfile`.
+CI reads the same pin. Update it together with the uv image tag and digest in
+`Dockerfile`.
 This is a repository convention; uv does not read the file automatically. From the
 repository root, run this in Bash to install the pinned release when needed:
 
