@@ -1,9 +1,9 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "2026-11-03T17:15:59.639643Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
@@ -350,7 +350,7 @@ wheels = [
 
 [[package]]
 name = "gumnut-sdk"
-version = "0.186.0"
+version = "0.187.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -360,9 +360,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/89/22/b90b6ac8d38030380551d6f33ec6e56d56abbc8f22491eb24484251f6208/gumnut_sdk-0.186.0.tar.gz", hash = "sha256:26f72042068894742981415672acd0c831acfba45741cb46db7d61c7868769c3", size = 367918, upload-time = "2026-11-15T19:03:20.834Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e5/29/dc21cd843e8884390878301d32003e659a1dfd1da38f94b8b95656a64e73/gumnut_sdk-0.187.0.tar.gz", hash = "sha256:68ae4d22087cd9a8cc91ffbe352b3e3d132d5854e161f0759328e83cf3dcdb33", size = 368520, upload-time = "2026-11-17T17:37:41.279Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/b6/6d03f1ab5e858997b83dc3d7f9f678dc23b3fb4b8e924edfbcbc077e5807/gumnut_sdk-0.186.0-py3-none-any.whl", hash = "sha256:2cf44347e0942d52a3eda944e6b8b0e0d7b162b58b9dc72edf0c313aef2c4114", size = 275460, upload-time = "2026-11-15T19:03:22.103Z" },
+    { url = "https://files.pythonhosted.org/packages/65/32/bbcf68c3f8a069ba043a5ee34e111b04d7543f4d3da0372412269b2d4edd/gumnut_sdk-0.187.0-py3-none-any.whl", hash = "sha256:67f47a59cfd199eb9f0eeddf60a6b67837110574baf72905f08e175118b0a8c4", size = 275997, upload-time = "2026-11-17T17:37:40.033Z" },
 ]
 
 [[package]]
