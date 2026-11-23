@@ -1,6 +1,6 @@
 ---
 title: Production API Smoke Testing
-last-updated: 2026-10-21
+last-updated: 2026-11-23
 ---
 
 # Production API Smoke Testing
@@ -24,17 +24,18 @@ cover the identity's selected Immich library. Verify the key against the
 deployed adapter before activation. Do not broaden permissions or change the
 identity's library selection to make the check pass without a separate decision.
 
-The shared production password manager remains the recovery copy. GitHub
-Actions receives the key through the organization secret `PROD_SMOKE_API_KEY`,
-restricted to the repositories that run production smoke checks. The workflow
-maps that value to Checkly's deployment-time
-`CHECKLY_SECRET_IMMICH_SMOKE_API_KEY`; the adapter group's encrypted secret and
-runtime name remain `IMMICH_SMOKE_API_KEY`. No separate adapter credential or
-repository secret is needed. Avoid repository or environment secrets with the
-same GitHub name: they override the organization value and can hide a rotation.
+GitHub Actions receives the key as the `PROD_SMOKE_API_KEY` secret in the
+`production-smoke` environment, whose deployment-branch policy admits only
+`main`. Every job that reads it declares that environment. The workflow maps
+the value to Checkly's deployment-time `CHECKLY_SECRET_IMMICH_SMOKE_API_KEY`;
+the adapter group's encrypted secret and runtime name remain
+`IMMICH_SMOKE_API_KEY`. No separate adapter credential is needed. Do not add
+repository or organization secrets with these names: any branch can add a job
+that reads them. Neither GitHub nor Checkly reveals a stored value, so there is
+no recovery copy; replace a lost key by rotating it.
 
-The organization secret `CHECKLY_API_KEY` supplies the existing Checkly service
-credential for deploying definitions. It is distinct from the read-only Gumnut
+The `CHECKLY_API_KEY` secret in the same environment supplies the existing
+Checkly service credential for deploying definitions. It is distinct from the read-only Gumnut
 key. Record both credentials' consumers and rotation owner privately. Never put
 literal keys in commands, source, issues, or result artifacts. Restrict
 check-code administration to operators because check code can access runtime
@@ -163,11 +164,11 @@ deployment. Muting suppresses notifications while requests continue, so it
 is not a maintenance pause.
 
 For planned key rotation, pause every smoke group using the shared credential.
-Create a replacement with the same read-only scopes, update the password
-manager and organization secret, and redeploy every consumer's Checkly secret
-while inactive. Validate each catalog with a hosted run before revoking the old
-key and resuming. Check for repository or environment overrides before calling
-the rotation complete. If compromise is suspected, revoke the exposed key
+Create a replacement with the same read-only scopes, update each consumer's
+`production-smoke` environment secret, and redeploy every consumer's Checkly
+secret while inactive. Validate each catalog with a hosted run before revoking
+the old key and resuming. Check for stray repository- or organization-level
+copies before calling the rotation complete. If compromise is suspected, revoke the exposed key
 immediately; do not wait for successful replacement. Rotate the shared Checkly
 service key separately if affected. A pause cannot prevent use of a stolen
 credential.
