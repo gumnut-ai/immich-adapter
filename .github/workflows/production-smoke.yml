@@ -55,6 +55,10 @@ jobs:
       github.event_name != 'pull_request' &&
       vars.IMMICH_SMOKE_DEPLOY_ENABLED == 'true' &&
       (github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy')
+    # The Checkly and production smoke keys live only in this environment,
+    # whose deployment-branch policy admits `main` alone. That policy, not the
+    # `if:` above, is the boundary, because a branch can rewrite this file.
+    environment: production-smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -100,6 +104,10 @@ jobs:
       github.ref == 'refs/heads/main' &&
       github.event_name == 'workflow_dispatch' &&
       inputs.operation == 'inspect'
+    # The Checkly and production smoke keys live only in this environment,
+    # whose deployment-branch policy admits `main` alone. That policy, not the
+    # `if:` above, is the boundary, because a branch can rewrite this file.
+    environment: production-smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -128,6 +136,10 @@ jobs:
       github.ref == 'refs/heads/main' &&
       github.event_name == 'workflow_dispatch' &&
       inputs.operation == 'test'
+    # The Checkly and production smoke keys live only in this environment,
+    # whose deployment-branch policy admits `main` alone. That policy, not the
+    # `if:` above, is the boundary, because a branch can rewrite this file.
+    environment: production-smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
