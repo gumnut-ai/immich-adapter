@@ -74,6 +74,22 @@
       "matchManagers": ["dockerfile"],
       "matchPackageNames": ["ghcr.io/immich-app/immich-server"],
       "enabled": false
+    },
+    {
+      "description": "Qualify Python native dependencies and aligned runtime declarations before proposing a new minor or major",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "groupName": null,
+      "commitMessageTopic": "Python runtime",
+      "dependencyDashboardApproval": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-11-13
+last-updated: 2026-11-23
 ---
 
 # Development Tools
@@ -126,6 +126,24 @@ The daily [dependency maintenance overlay](../../.github/dependency-maintenance/
 inspects bot work before useful uncovered updates. It preserves release-age
 policy and compatible API behavior; human review and ordinary PR CI remain
 required. The legacy dependency-snapshot collector remains disabled.
+
+### Python runtime proposals
+
+Python Docker major/minor updates wait for Dependency Dashboard approval before
+Renovate creates a branch/PR. They are separate from the broad container image
+group, so other images and routine Python digest updates keep their existing
+policy.
+
+Release a proposal after the target interpreter, compatible native dependencies
+and selected artifacts clear the cooldown, all Python declarations agree, and
+installation, tests and the actual service image have been qualified on that
+interpreter. Green CI on the old Python version is insufficient. Upgrade
+Pydantic and its matching core together when needed; preserve existing API and
+session behavior.
+
+Dashboard approval requests a proposal; it does not automatically detect native
+compatibility or replace GitHub review/approval. Existing runtime PRs are not
+closed by this setting. Review, CI, release-age and merge requirements remain.
 
 ### Not Managed by Renovate
 
