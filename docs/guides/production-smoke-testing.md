@@ -1,6 +1,6 @@
 ---
 title: Production API Smoke Testing
-last-updated: 2026-11-23
+last-updated: 2026-11-25
 ---
 
 # Production API Smoke Testing
@@ -105,9 +105,9 @@ overwrite the pinned fixture automatically.
 
 With the fixture and Checkly variables configured, dispatch `operation=test`.
 Keep its Actions run URL and recorded Checkly result URL as distinct evidence.
-The test uses the group's encrypted runtime secret, populated from the injected
-organization credential. No secret values or raw
-personal responses belong in outputs or artifacts. These manual operations
+The test uses the group's encrypted runtime secret, populated from
+`PROD_SMOKE_API_KEY` in the `production-smoke` environment. No secret values or
+raw personal responses belong in outputs or artifacts. These manual operations
 neither change demo content nor activate the recurring monitor, and manual
 test sessions do not count as scheduled coverage or alert-delivery proof.
 
