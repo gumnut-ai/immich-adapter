@@ -200,11 +200,11 @@ wheels = [
 
 [[package]]
 name = "dnspython"
-version = "2.9.0"
+version = "2.9.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ef/4a/50822184bd67cc6493f0fb6a880749158fcd31ab3fa07409acfd91f9fc85/dnspython-2.9.0.tar.gz", hash = "sha256:b44dc6b18f07a8b1c56676a19fbfdb5209415b046a9cece286baafa87ff3f7f1", size = 423560, upload-time = "2026-10-09T00:07:24.352Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/49/900383b471c645a3c397f47b3211d1fcecb3a540c98f683494cdf86b33de/dnspython-2.9.2.tar.gz", hash = "sha256:8d4d39a513e649d634004ce4d39ade2352efcea472a0247535a5c2d18a9d7ba9", size = 455484, upload-time = "2026-11-03T23:56:53.601Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/02/cdcc9b7c051786a103c3b09e1003a82fa0c66bcb91ffbdabcfbf7b4163b9/dnspython-2.9.0-py3-none-any.whl", hash = "sha256:9a4aedb833c3c1b49214d04d44d3032ab7a9135f7c1d29a549b4ff78fd82fda9", size = 354822, upload-time = "2026-10-09T00:07:22.622Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/0c/5346358b3a20275d256978c35203ddc2c8617f78c1b23795b79ba22ced6d/dnspython-2.9.2-py3-none-any.whl", hash = "sha256:af15f7d385a6ae2fb35a796fde2138004c8c42c7389090e2addc83e3b3340fd8", size = 360455, upload-time = "2026-11-03T23:56:52.088Z" },
 ]
 
 [[package]]
@@ -350,7 +350,7 @@ wheels = [
 
 [[package]]
 name = "gumnut-sdk"
-version = "0.188.0"
+version = "0.189.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -360,9 +360,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/35/38/e889fe143ca6c6228b702b4bffc8553dad9c0e39805134d1ef9336d48ad8/gumnut_sdk-0.188.0.tar.gz", hash = "sha256:aa707f23c31ee5367b1591c208ff790589a0ecaec5d9eae828431cfc6f19a450", size = 368269, upload-time = "2026-11-19T19:21:31.344Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/4f/068a9c40751350588c7ec6785e70385efec121ecaee29c2d7cbd647d6b7a/gumnut_sdk-0.189.0.tar.gz", hash = "sha256:f7993d37c32404b8547bfcfe97a8828180308659eec225c3df186b12ddd42727", size = 211545, upload-time = "2026-11-24T21:29:16.003Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/03/6d/92576b054aaf0cea106ba9e59ce3c0459e5b30998dd6d5d7b3eb9e1b6fa4/gumnut_sdk-0.188.0-py3-none-any.whl", hash = "sha256:7f410200482d1fe14340add20a808d254bb6b0f5723536f84b10768f412f9511", size = 275427, upload-time = "2026-11-19T19:21:29.768Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/10/4309674206b0e8ca99eea3bebdeb593c05455ea370b4870fb69e6e248b0a/gumnut_sdk-0.189.0-py3-none-any.whl", hash = "sha256:5b7dc7fc911436db48e5a8f00d349494dc874d9ad2a12625af256b7a8395d8fe", size = 272795, upload-time = "2026-11-24T21:29:14.162Z" },
 ]
 
 [[package]]
@@ -557,14 +557,14 @@ wheels = [
 
 [[package]]
 name = "markdown-it-py"
-version = "4.2.0"
+version = "4.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mdurl" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/06/ff/7841249c247aa650a76b9ee4bbaeae59370dc8bfd2f6c01f3630c35eb134/markdown_it_py-4.2.0.tar.gz", hash = "sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49", size = 82454, upload-time = "2026-05-07T12:08:28.36Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/16/fc/cee2c45553c9a9bf77d8b0c391560c556d7ed756b1f0bb35eb5d48db09ea/markdown_it_py-4.3.0.tar.gz", hash = "sha256:91a58fa5b72c71a40cf7177250fd767480d7a2bb3ac426ccfb76fb90305fdaaa", size = 242701, upload-time = "2026-11-10T16:18:30.467Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/81/4da04ced5a082363ecfa159c010d200ecbd959ae410c10c0264a38cac0f5/markdown_it_py-4.2.0-py3-none-any.whl", hash = "sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a", size = 91687, upload-time = "2026-05-07T12:08:27.182Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/31/5f0ac2f1a1c67423c995c731a11cd4ad05d081a2be969d74f868bdb9cc70/markdown_it_py-4.3.0-py3-none-any.whl", hash = "sha256:7aa1511a46c39138de78d9eba92ce47e63124d8003fc98b3a351909e04239efa", size = 96951, upload-time = "2026-11-10T16:18:28.975Z" },
 ]
 
 [[package]]
