@@ -1,6 +1,6 @@
 ---
 title: Production API Smoke Testing
-last-updated: 2026-11-25
+last-updated: 2026-11-27
 ---
 
 # Production API Smoke Testing
@@ -25,9 +25,15 @@ deployed adapter before activation. Do not broaden permissions or change the
 identity's library selection to make the check pass without a separate decision.
 
 GitHub Actions receives the key as the `PROD_SMOKE_API_KEY` secret in the
-`production-smoke` environment, whose deployment-branch policy admits only
-`main`. Every job that reads it declares that environment. The workflow maps
-the value to Checkly's deployment-time `CHECKLY_SECRET_IMMICH_SMOKE_API_KEY`;
+`production-smoke` environment. Configure that environment's deployment-branch
+policy in repository settings to admit only `main`; this hosted rule is the
+boundary that protects the key. Every job that reads it declares the
+environment, but the workflow's `if:` conditions are editable workflow code
+and do not replace the branch policy. See GitHub's [environment
+documentation](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
+for the setting. The repository linter cannot verify this hosted
+configuration. The workflow maps the value to Checkly's deployment-time
+`CHECKLY_SECRET_IMMICH_SMOKE_API_KEY`;
 the adapter group's encrypted secret and runtime name remain
 `IMMICH_SMOKE_API_KEY`. No separate adapter credential is needed. Do not add
 repository or organization secrets with these names: any branch can add a job
