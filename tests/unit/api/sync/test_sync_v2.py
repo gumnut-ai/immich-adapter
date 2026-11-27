@@ -20,7 +20,7 @@ converter call sites directly, without needing to construct the DTOs.
 import inspect
 
 from routers.api.sync import converters, events, stream
-from routers.api.sync.fk_integrity import _GUMNUT_TYPE_TO_SYNC_TYPES
+from routers.api.sync.fk_integrity import _GUMNUT_TYPE_TO_SYNC_TYPES, FK_REFERENCES
 from routers.api.sync.stream import (
     _DERIVED_UPSERT_ONLY_TYPES,
     _NOOP_REQUEST_TYPES,
@@ -168,11 +168,20 @@ def test_events_routing_references_every_streamed_v2_type():
         )
 
 
-def test_album_cover_override_applies_to_album_v2():
-    """The album cover causal-consistency override must run on the AlbumV2 path
-    (the v3 client streams albums as AlbumV2), not just AlbumV1. The override
-    lives in _stream_entity_type, where AlbumV2 appears only in that gate."""
-    assert "SyncEntityType.AlbumV2" in inspect.getsource(stream._stream_entity_type)
+def test_album_cover_override_metadata_covers_album_v2():
+    """The v3 AlbumV2 path stays in the declared album cover override scope."""
+    cover_reference = next(
+        reference
+        for reference in FK_REFERENCES["album"]
+        if reference.field_name == "album_cover_asset_id"
+    )
+
+    assert cover_reference.payload_override_event == "album_updated"
+    assert cover_reference.payload_override_sync_types == (
+        SyncEntityType.AlbumV1,
+        SyncEntityType.AlbumV2,
+    )
+    assert SyncEntityType.AlbumUserV1 not in cover_reference.payload_override_sync_types
 
 
 # --- AlbumUsersV1: owner album-user link (required for v3 album display) ------

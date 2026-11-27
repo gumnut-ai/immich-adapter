@@ -40,6 +40,7 @@ from routers.api.sync.events import (
 )
 from routers.api.sync.fk_integrity import (
     SyncStreamStats,
+    apply_payload_fk_overrides,
     check_fk_references,
     extract_payload_fk_refs,
     null_deleted_fk_references,
@@ -667,22 +668,16 @@ async def _stream_entity_type(
                 ):
                     entity = entity.model_copy(update={"person_id": None})
 
-                # face_updated events carry the causally-consistent
-                # person_id in the event payload. Use it instead of the
-                # entity's current state, which may reference a person
-                # assigned by a later clustering run.
-                elif (
-                    sync_entity_type
-                    in (SyncEntityType.AssetFaceV1, SyncEntityType.AssetFaceV2)
-                    and event.event_type == "face_updated"
-                    and isinstance(entity, FaceResponse)
-                    and isinstance(event.payload, dict)
-                ):
-                    should_apply, person_id = payload_override(
-                        event.payload, "person_id"
+                # Keep event-time FK values aligned with the declaration used
+                # to verify those references still exist.
+                if isinstance(entity, (FaceResponse, AlbumResponse)):
+                    entity = apply_payload_fk_overrides(
+                        gumnut_entity_type,
+                        sync_entity_type,
+                        entity,
+                        event.event_type,
+                        event.payload,
                     )
-                    if should_apply and entity.person_id != person_id:
-                        entity = entity.model_copy(update={"person_id": person_id})
 
                 # Preserve event-time stack membership when hydration observes
                 # a later move whose stack event is outside this sync window.
@@ -695,26 +690,6 @@ async def _stream_entity_type(
                     should_apply, stack_id = payload_override(event.payload, "stack_id")
                     if should_apply and entity.stack_id != stack_id:
                         entity = entity.model_copy(update={"stack_id": stack_id})
-
-                # album_updated events carry the causally-consistent
-                # album_cover_asset_id in the event payload. Use it
-                # instead of the entity's current state, which is
-                # computed at fetch time (oldest asset in album) and may
-                # reference an asset added after the event was recorded
-                # — potentially outside the client's sync window.
-                if (
-                    sync_entity_type in (SyncEntityType.AlbumV1, SyncEntityType.AlbumV2)
-                    and event.event_type == "album_updated"
-                    and isinstance(entity, AlbumResponse)
-                    and isinstance(event.payload, dict)
-                ):
-                    should_apply, cover_id = payload_override(
-                        event.payload, "album_cover_asset_id"
-                    )
-                    if should_apply and entity.album_cover_asset_id != cover_id:
-                        entity = entity.model_copy(
-                            update={"album_cover_asset_id": cover_id}
-                        )
 
                 # Null FK fields that reference entities confirmed deleted
                 # (returned 404 during fetch or payload-ref verification above).

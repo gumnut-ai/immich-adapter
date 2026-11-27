@@ -9,7 +9,10 @@ from uuid import UUID
 import pytest
 from gumnut.types.face_response import FaceResponse
 
-from routers.api.sync.fk_integrity import SyncStreamStats
+from routers.api.sync.fk_integrity import (
+    SyncStreamStats,
+    apply_payload_fk_overrides,
+)
 from routers.api.sync.stream import SyncBound, _stream_entity_type, generate_sync_stream
 from routers.immich_models import SyncEntityType, SyncRequestType, SyncStreamDto
 from routers.utils.gumnut_id_conversion import (
@@ -34,6 +37,24 @@ from tests.unit.api.sync.conftest import (
     create_mock_person_data,
     create_mock_user,
 )
+
+
+def test_album_payload_override_metadata_excludes_derived_album_user_type():
+    """Only album wire entities consume the event-time cover override."""
+    updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
+    album = create_mock_album_data(updated_at)
+    cover_id = uuid_to_gumnut_asset_id(UUID("00000000-0000-0000-0000-000000000088"))
+    payload = {"album_cover_asset_id": cover_id}
+
+    album_v2 = apply_payload_fk_overrides(
+        "album", SyncEntityType.AlbumV2, album, "album_updated", payload
+    )
+    album_user = apply_payload_fk_overrides(
+        "album", SyncEntityType.AlbumUserV1, album, "album_updated", payload
+    )
+
+    assert album_v2.album_cover_asset_id == cover_id
+    assert album_user.album_cover_asset_id is None
 
 
 class TestFacePersonIdOverride:
