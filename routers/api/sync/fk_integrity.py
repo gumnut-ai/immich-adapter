@@ -22,6 +22,7 @@ class FKReference(NamedTuple):
     field_name: str
     referenced_type: str
     payload_override_event: str | None = None
+    payload_override_sync_types: tuple[SyncEntityType, ...] = ()
 
 
 # Each FK is declared once, including the event that can supply its
@@ -29,7 +30,15 @@ class FKReference(NamedTuple):
 # before streaming, even when the referenced entity type is not requested.
 FK_REFERENCES: dict[str, list[FKReference]] = {
     "face": [
-        FKReference("person_id", "person", payload_override_event="face_updated"),
+        FKReference(
+            "person_id",
+            "person",
+            payload_override_event="face_updated",
+            payload_override_sync_types=(
+                SyncEntityType.AssetFaceV1,
+                SyncEntityType.AssetFaceV2,
+            ),
+        ),
         FKReference("asset_id", "asset"),
     ],
     "album_asset": [
@@ -38,7 +47,13 @@ FK_REFERENCES: dict[str, list[FKReference]] = {
     ],
     "album": [
         FKReference(
-            "album_cover_asset_id", "asset", payload_override_event="album_updated"
+            "album_cover_asset_id",
+            "asset",
+            payload_override_event="album_updated",
+            payload_override_sync_types=(
+                SyncEntityType.AlbumV1,
+                SyncEntityType.AlbumV2,
+            ),
         ),
     ],
 }
@@ -73,6 +88,33 @@ def payload_override(payload: dict[str, Any], key: str) -> tuple[bool, str | Non
         type(value).__name__,
     )
     return False, None
+
+
+def apply_payload_fk_overrides[PayloadOverrideModel: BaseModel](
+    gumnut_entity_type: str,
+    sync_entity_type: SyncEntityType,
+    entity: PayloadOverrideModel,
+    event_type: str,
+    payload: Any,
+) -> PayloadOverrideModel:
+    """Apply declared event-time FK values for the matching sync type."""
+    if not isinstance(payload, dict):
+        return entity
+
+    updates: dict[str, str | None] = {}
+    for reference in FK_REFERENCES.get(gumnut_entity_type, []):
+        if (
+            event_type != reference.payload_override_event
+            or sync_entity_type not in reference.payload_override_sync_types
+            or not hasattr(entity, reference.field_name)
+        ):
+            continue
+
+        should_apply, value = payload_override(payload, reference.field_name)
+        if should_apply and getattr(entity, reference.field_name) != value:
+            updates[reference.field_name] = value
+
+    return entity.model_copy(update=updates) if updates else entity
 
 
 @dataclass
