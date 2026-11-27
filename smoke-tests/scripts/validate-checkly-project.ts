@@ -38,7 +38,9 @@ for (const diagnostic of diagnostics.observations) {
   console.log(`${diagnostic.isFatal() ? "error" : "notice"}: ${diagnostic.title}: ${diagnostic.message}`)
 }
 if (diagnostics.isFatal()) process.exit(1)
-const bundler = await Bundler.createForWorkspace(Session.workspace.unwrap())
+const bundler = await Bundler.createForWorkspace(Session.workspace.unwrap(), {
+  packageManager: Session.packageManager,
+})
 const bundle = await project.bundle(bundler)
 if (Object.keys(bundle.data.check).length !== 1 || !bundle.data.check["immich-adapter-read-contract"]) {
   throw new Error("Expected exactly the Immich adapter read contract check")

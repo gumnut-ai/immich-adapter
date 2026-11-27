@@ -16,7 +16,7 @@
   "devDependencies": {
     "@playwright/test": "1.64.0",
     "@types/node": "24.13.3",
-    "checkly": "8.20.0",
+    "checkly": "8.23.2",
     "typescript": "5.9.3"
   }
 }
